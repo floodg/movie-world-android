@@ -132,6 +132,18 @@ New package `ui/theme/`:
 - Heavy poster rows can be memory hungry; rely on Coil size hints and keep rows to a bounded item count.
 - Backdrop images are remote, so the hero needs a good offline fallback (gradient plus poster).
 
+## Decisions taken during implementation
+
+1. Accent: warm amber (`#F5A524`) with near-black text on filled buttons. It reads as cinema without echoing any streaming brand.
+2. Coil 3 (`coil-compose` + `coil-network-okhttp`) replaced the hand-rolled loader; disk cache is on by default.
+3. Phone portrait is the primary target. Grids use adaptive columns and the hero and backdrop shorten in landscape, but tablet layouts were not tuned further.
+4. Favourites stay in `SharedPreferences` under the existing key, wrapped in `Favourites` so screens observe a `StateFlow`.
+5. The redesign proceeded on this branch without waiting for the Samsung playback test. No playback, DLNA or Telegram code changed.
+
+Commits 2 and 3 of the suggested sequence were combined (the shared `PosterCard` needs the image pipeline to build), as were commits 4 to 9 (the nav graph references every screen, so the split could not build on its own).
+
+Not yet done from Phase 0 and Phase 10: before/after screenshots, the connected Compose UI tests (`RedesignUiTest`) and the manual device pass. No Android device or emulator image was available on the build machine; the UI tests compile and are ready to run with `:app:connectedDebugAndroidTest`.
+
 ## Open questions
 
 1. Accent colour: a deep red reads as "streaming" but is closest to the obvious reference. A different accent (electric blue, amber, violet) keeps the look original. Which do you prefer?

@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,6 +58,7 @@ import com.movieworld.android.ui.player.phase
 import com.movieworld.android.ui.search.SearchScreen
 import com.movieworld.android.ui.settings.TvSettingsScreen
 import com.movieworld.android.ui.theme.Surface1
+import com.movieworld.android.ui.theme.Surface2
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -114,7 +116,7 @@ fun MovieWorldApp(graph: AppGraph) {
                             onPlayPause = { Playback.control(context, if (cast.playing) "pause" else "resume") },
                             onStop = { Playback.control(context, "stop") },
                             onDismiss = { dismissedMessage = cast.message },
-                            modifier = if (showTabs) Modifier else Modifier.navigationBarsPadding(),
+                            modifier = if (showTabs) Modifier else Modifier.background(Surface2).navigationBarsPadding(),
                         )
                     }
                     AnimatedVisibility(showTabs, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
