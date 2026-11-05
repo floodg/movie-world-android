@@ -23,8 +23,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.movieworld.android.Movie
@@ -59,7 +59,7 @@ fun PosterCard(
             .scale(scale)
             .clip(PosterShape)
             .clickable(interaction, indication = null, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = description },
+            .clearAndSetSemantics { contentDescription = description },
     ) {
         RemoteImage(movie.poster, contentDescription = null, Modifier.fillMaxSize(), placeholderLabel = movie.title)
         if (showRating && movie.rating != null) {

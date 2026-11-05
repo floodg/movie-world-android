@@ -9,7 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <application android:label="Movie World" android:theme="@android:style/Theme.Material.NoActionBar"
+    <application android:label="Movie World" android:theme="@style/Theme.MovieWorld.Splash"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:networkSecurityConfig="@xml/network_security_config">
         <service android:name=".PlaybackService" android:exported="false"
             android:foregroundServiceType="connectedDevice|dataSync" />

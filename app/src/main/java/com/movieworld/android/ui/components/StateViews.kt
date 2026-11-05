@@ -23,8 +23,8 @@ import com.movieworld.android.ui.theme.Dimens
 fun StateMessage(
     icon: ImageVector,
     title: String,
-    body: String? = null,
     modifier: Modifier = Modifier,
+    body: String? = null,
     action: (@Composable () -> Unit)? = null,
 ) {
     Column(
