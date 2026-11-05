@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+.idea/
+**/build/
+local.properties
+*.iml
+*.jks
+*.keystore
+/sql-lite/
+
+# Local runtime data and diagnostics
+*.hprof
+hs_err_pid*.log
+*.apk
+*.aab
+.local/
