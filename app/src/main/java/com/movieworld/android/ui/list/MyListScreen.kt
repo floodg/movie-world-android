@@ -25,6 +25,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.movieworld.android.Movie
 import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
+import com.movieworld.android.ui.components.bottomClearance
 import com.movieworld.android.ui.components.PosterCard
 import com.movieworld.android.ui.components.ShimmerBox
 import com.movieworld.android.ui.components.StateMessage
@@ -59,7 +60,7 @@ fun MyListContent(movies: List<Movie>?, onOpen: (String) -> Unit, contentPadding
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = Dimens.screenPadding, end = Dimens.screenPadding,
-                top = Dimens.xs, bottom = contentPadding.calculateBottomPadding() + Dimens.lg,
+                top = Dimens.xs, bottom = contentPadding.bottomClearance() + Dimens.lg,
             ),
             horizontalArrangement = Arrangement.spacedBy(Dimens.sm),
             verticalArrangement = Arrangement.spacedBy(Dimens.sm),

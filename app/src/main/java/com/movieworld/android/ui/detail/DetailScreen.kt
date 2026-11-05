@@ -61,6 +61,7 @@ import com.movieworld.android.CastState
 import com.movieworld.android.Playback
 import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
+import com.movieworld.android.ui.components.bottomClearance
 import com.movieworld.android.ui.components.PrimaryButton
 import com.movieworld.android.ui.components.RatingBadge
 import com.movieworld.android.ui.components.RemoteImage
@@ -141,7 +142,7 @@ fun DetailContent(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + Dimens.xl),
+            contentPadding = PaddingValues(bottom = contentPadding.bottomClearance() + Dimens.xl),
         ) {
             item(key = "backdrop") {
                 Box(Modifier.fillMaxWidth().height(backdropHeight)) {

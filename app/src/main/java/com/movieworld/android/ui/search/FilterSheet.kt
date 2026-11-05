@@ -62,7 +62,6 @@ fun FilterSheet(
                 value = range,
                 onValueChange = { range = it },
                 valueRange = bounds.first.toFloat()..bounds.last.toFloat(),
-                steps = (bounds.last - bounds.first - 1).coerceAtLeast(0),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Release year from $start to $end" },
             )
             Spacer(Modifier.height(Dimens.xl))

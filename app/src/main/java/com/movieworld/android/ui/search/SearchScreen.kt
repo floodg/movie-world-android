@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -53,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
+import com.movieworld.android.ui.components.bottomClearance
 import com.movieworld.android.ui.components.GenreChip
 import com.movieworld.android.ui.components.PosterCard
 import com.movieworld.android.ui.components.SecondaryButton
@@ -91,7 +93,7 @@ fun SearchContent(
 ) {
     var showFilters by rememberSaveable { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Dimens.screenPadding, vertical = Dimens.sm),
             verticalAlignment = Alignment.CenterVertically,
@@ -195,7 +197,7 @@ private fun ResultGrid(results: List<com.movieworld.android.Movie>?, onOpen: (St
         modifier = Modifier.fillMaxSize().semantics { contentDescription = "Search results" },
         contentPadding = PaddingValues(
             start = Dimens.screenPadding, end = Dimens.screenPadding,
-            top = Dimens.xs, bottom = contentPadding.calculateBottomPadding() + Dimens.lg,
+            top = Dimens.xs, bottom = contentPadding.bottomClearance() + Dimens.lg,
         ),
         horizontalArrangement = Arrangement.spacedBy(Dimens.sm),
         verticalArrangement = Arrangement.spacedBy(Dimens.sm),

@@ -47,6 +47,7 @@ import com.movieworld.android.Playback
 import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.LocalMessages
 import com.movieworld.android.ui.components.AppIcons
+import com.movieworld.android.ui.components.bottomClearance
 import com.movieworld.android.ui.components.PrimaryButton
 import com.movieworld.android.ui.components.RemoteImage
 import com.movieworld.android.ui.components.SecondaryButton
@@ -106,7 +107,7 @@ fun HomeContent(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + Dimens.xl),
+            contentPadding = PaddingValues(bottom = contentPadding.bottomClearance() + Dimens.xl),
             verticalArrangement = Arrangement.spacedBy(Dimens.xl),
         ) {
             item(key = "hero") {
@@ -127,17 +128,20 @@ fun HomeContent(
                         body = "Reinstall the app to restore the bundled catalogue.")
                 }
             }
-            item(key = "continue") {
+            // Rows that are still loading show shimmer; rows known to be empty are left out entirely
+            // so they do not leave gaps in the column.
+            val continuing = state.continuing
+            if (continuing == null || continuing.isNotEmpty()) item(key = "continue") {
                 SectionRow(
                     title = "Continue Watching",
-                    movies = state.continuing?.map { it.movie },
+                    movies = continuing?.map { it.movie },
                     onOpen = { onOpen(it.id) },
-                    progress = { movie -> state.continuing?.firstOrNull { it.movie.id == movie.id }?.progress?.let(::watchedFraction) },
+                    progress = { movie -> continuing?.firstOrNull { it.movie.id == movie.id }?.progress?.let(::watchedFraction) },
                 )
             }
-            item(key = "my-list") { SectionRow("My List", state.myList, onOpen = { onOpen(it.id) }) }
-            item(key = "top-rated") { SectionRow("Top Rated", state.topRated, onOpen = { onOpen(it.id) }) }
-            state.genreRows.forEach { row ->
+            if (state.myList?.isEmpty() != true) item(key = "my-list") { SectionRow("My List", state.myList, onOpen = { onOpen(it.id) }) }
+            if (state.topRated?.isEmpty() != true) item(key = "top-rated") { SectionRow("Top Rated", state.topRated, onOpen = { onOpen(it.id) }) }
+            state.genreRows.filter { it.movies?.isEmpty() != true }.forEach { row ->
                 item(key = "genre-${row.genre.id}") { SectionRow(row.genre.name, row.movies, onOpen = { onOpen(it.id) }) }
             }
         }
@@ -201,8 +205,8 @@ private fun Hero(
         if (featured != null) {
             val movie = featured.movie
             Column(
-                Modifier.align(Alignment.BottomStart).fillMaxWidth()
-                    .then(if (landscape) Modifier.fillMaxWidth(0.6f) else Modifier)
+                Modifier.align(Alignment.BottomStart)
+                    .fillMaxWidth(if (landscape) 0.6f else 1f)
                     .padding(horizontal = Dimens.screenPadding),
             ) {
                 Text(
