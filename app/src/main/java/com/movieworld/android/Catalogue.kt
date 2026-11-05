@@ -14,6 +14,7 @@ data class MovieDetails(
     val genres: List<String>,
     val cast: List<String>,
 )
+data class Featured(val movie: Movie, val backdrop: String?, val telegram: String?, val genres: List<String>)
 
 class Catalogue(private val context: Context) {
     private val title = "COALESCE(m.title, m.source_title)"
@@ -86,6 +87,99 @@ class Catalogue(private val context: Context) {
                     add(Movie(rows.getString(0), rows.getString(1), rows.getString(2), rows.getString(3), rows.getString(4)))
                 }
             }
+        }
+    }
+
+    private val columns = "m.id, $title, m.release_year, m.imdb_rating, m.poster_url"
+
+    private fun android.database.Cursor.movies(): List<Movie> = use { rows ->
+        buildList {
+            while (rows.moveToNext()) {
+                add(Movie(rows.getString(0), rows.getString(1), rows.getString(2), rows.getString(3), rows.getString(4)))
+            }
+        }
+    }
+
+    /** Highest ranked titles for the home screen. */
+    fun topRated(limit: Int): List<Movie> = read { db ->
+        db.rawQuery(
+            "SELECT $columns FROM movies m WHERE $visible AND m.imdb_rating IS NOT NULL ORDER BY $rank LIMIT ?",
+            arrayOf(limit.toString())
+        ).movies()
+    }
+
+    /** Highest ranked titles in one genre. */
+    fun byGenre(genreId: String, limit: Int): List<Movie> = read { db ->
+        db.rawQuery(
+            """SELECT $columns FROM movies m WHERE $visible
+               AND EXISTS (SELECT 1 FROM movie_genres WHERE movie_id = m.id AND genre_id = ?)
+               ORDER BY $rank LIMIT ?""",
+            arrayOf(genreId, limit.toString())
+        ).movies()
+    }
+
+    /** Genres with the most visible titles, for the home rows. */
+    fun popularGenres(limit: Int): List<Genre> = read { db ->
+        db.rawQuery(
+            """SELECT g.id, g.name, COUNT(*) AS total FROM genres g
+               JOIN movie_genres mg ON mg.genre_id = g.id JOIN movies m ON m.id = mg.movie_id
+               WHERE g.name <> 'Adult' AND $visible
+               GROUP BY g.id ORDER BY total DESC, g.name COLLATE NOCASE LIMIT ?""",
+            arrayOf(limit.toString())
+        ).use { rows -> buildList { while (rows.moveToNext()) add(Genre(rows.getString(0), rows.getString(1))) } }
+    }
+
+    /**
+     * Hero title: a well-known, highly rated movie with a backdrop. The pick rotates daily
+     * through the top of the ranking so the home screen does not look frozen.
+     */
+    fun featured(dayOfYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)): Featured? = read { db ->
+        val offset = dayOfYear % 40
+        val movie = db.rawQuery(
+            """SELECT $columns FROM movies m WHERE $visible AND m.backdrop_url IS NOT NULL
+               AND m.imdb_rating IS NOT NULL ORDER BY $rank LIMIT 1 OFFSET ?""",
+            arrayOf(offset.toString())
+        ).movies().firstOrNull() ?: db.rawQuery(
+            "SELECT $columns FROM movies m WHERE $visible AND m.backdrop_url IS NOT NULL ORDER BY $rank LIMIT 1", null
+        ).movies().firstOrNull() ?: return@read null
+        val (backdrop, telegram) = db.rawQuery("SELECT backdrop_url, telegram_url FROM movies WHERE id = ?", arrayOf(movie.id)).use { rows ->
+            if (rows.moveToFirst()) rows.getString(0) to rows.getString(1) else null to null
+        }
+        val genres = db.rawQuery(
+            """SELECT g.name FROM movie_genres mg JOIN genres g ON g.id = mg.genre_id
+               WHERE mg.movie_id = ? AND g.name <> 'Adult' ORDER BY g.name LIMIT 3""", arrayOf(movie.id)
+        ).use { rows -> buildList { while (rows.moveToNext()) add(rows.getString(0)) } }
+        Featured(movie, backdrop, telegram, genres)
+    }
+
+    /** Titles sharing the most genres with [id], ranked. */
+    fun similar(id: String, limit: Int): List<Movie> = read { db ->
+        db.rawQuery(
+            """SELECT $columns FROM movies m
+               JOIN movie_genres mg ON mg.movie_id = m.id
+               WHERE m.id <> ? AND $visible
+               AND mg.genre_id IN (SELECT genre_id FROM movie_genres WHERE movie_id = ?)
+               GROUP BY m.id ORDER BY COUNT(*) DESC, $rank LIMIT ?""",
+            arrayOf(id, id, limit.toString())
+        ).movies()
+    }
+
+    /** Visible titles for a set of ids (favourites), in rank order. */
+    fun byIds(ids: Collection<String>): List<Movie> = read { db ->
+        if (ids.isEmpty()) return@read emptyList()
+        ids.chunked(500).flatMap { chunk ->
+            val marks = chunk.joinToString(",") { "?" }
+            db.rawQuery(
+                "SELECT $columns FROM movies m WHERE m.id IN ($marks) AND $visible ORDER BY $rank",
+                chunk.toTypedArray()
+            ).movies()
+        }
+    }
+
+    /** Inclusive release year bounds across visible titles, for the year filter. */
+    fun yearRange(): IntRange? = read { db ->
+        db.rawQuery("SELECT MIN(m.release_year), MAX(m.release_year) FROM movies m WHERE $visible", null).use { rows ->
+            if (!rows.moveToFirst() || rows.isNull(0) || rows.isNull(1)) null else rows.getInt(0)..rows.getInt(1)
         }
     }
 
