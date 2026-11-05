@@ -170,13 +170,16 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                     connected = telegram.step == "ready",
                     status = when (telegram.step) {
                         "ready" -> "Connected"
+                        "joining" -> "Joining movie channel…"
+                        "channel_pending" -> "Waiting for channel approval"
+                        "channel_error" -> "Channel setup incomplete"
                         "setup" -> "Not set up"
                         "initializing" -> "Startingâ€¦"
                         "closed" -> "Closed"
                         else -> "Sign-in in progress"
                     },
                 ) {
-                    Text("Use an account that has joined the movie channel. This sign-in is separate from the Telegram app.",
+                    Text("Sign in to Telegram and Movie World will automatically join the movie channel using your account. This sign-in is separate from the Telegram app.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(Dimens.lg))
                     StepIndicator(telegram.step)
@@ -216,7 +219,16 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                                 }
                             })
                         }
-                        "ready" -> Text("Telegram is connected and ready for TV playback.", style = MaterialTheme.typography.bodyMedium)
+                        "ready" -> Text("Telegram is connected and the movie channel is joined. Ready for TV playback.", style = MaterialTheme.typography.bodyMedium)
+                        "joining" -> {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Spacer(Modifier.height(Dimens.sm))
+                            Text("Joining the movie channel…", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        "channel_error", "channel_pending" -> SecondaryButton(
+                            "Retry channel connection", enabled = !busy, modifier = Modifier.fillMaxWidth(),
+                            onClick = { runWork { withContext(Dispatchers.IO) { source.joinMovieChannel() } } },
+                        )
                         "initializing" -> Text("Starting Telegramâ€¦", style = MaterialTheme.typography.bodyMedium)
                         "closed" -> Text("Restart Movie World to reconnect Telegram.", style = MaterialTheme.typography.bodyMedium)
                         else -> Text("Telegram needs an additional sign-in step. Complete any account requirements in Telegram and retry.",
@@ -228,7 +240,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                     }
                     if (telegram.step != "setup") {
                         Spacer(Modifier.height(Dimens.sm))
-                        TextButton(enabled = !busy && !playback.active, contentPadding = PaddingValues(0.dp), onClick = {
+                        TextButton(enabled = !busy && !playback.active && telegram.step != "joining", contentPadding = PaddingValues(0.dp), onClick = {
                             runWork { withContext(Dispatchers.IO) { source.resetConfiguration() } }
                         }) { Text("Change Telegram API credentials") }
                     }
@@ -303,11 +315,12 @@ private fun DeviceRow(tv: Renderer, selected: Boolean, enabled: Boolean, onSelec
     }
 }
 
-private val TelegramSteps = listOf("setup" to "Credentials", "phone" to "Phone", "code" to "Code", "password" to "Password", "ready" to "Ready")
+private val TelegramSteps = listOf("setup" to "Credentials", "phone" to "Phone", "code" to "Code", "password" to "Password", "joining" to "Channel", "ready" to "Ready")
 
 @Composable
 private fun StepIndicator(step: String) {
-    val index = TelegramSteps.indexOfFirst { it.first == step }.let { if (it < 0) 1 else it }
+    val displayStep = if (step in listOf("channel_pending", "channel_error")) "joining" else step
+    val index = TelegramSteps.indexOfFirst { it.first == displayStep }.let { if (it < 0) 1 else it }
     Row(Modifier.fillMaxWidth().semantics { contentDescription = "Telegram setup step ${index + 1} of ${TelegramSteps.size}" },
         verticalAlignment = Alignment.CenterVertically) {
         TelegramSteps.forEachIndexed { position, (_, label) ->

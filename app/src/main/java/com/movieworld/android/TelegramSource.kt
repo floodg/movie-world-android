@@ -75,11 +75,14 @@ class TelegramSource private constructor(private val context: Context) {
                     is TdApi.AuthorizationStateWaitPhoneNumber -> "phone"
                     is TdApi.AuthorizationStateWaitCode -> "code"
                     is TdApi.AuthorizationStateWaitPassword -> "password"
-                    is TdApi.AuthorizationStateReady -> "ready"
+                    is TdApi.AuthorizationStateReady -> "joining"
                     is TdApi.AuthorizationStateClosed -> "closed"
                     else -> "additional"
                 }
                 mutableState.value = TelegramState(step)
+                if (authorization is TdApi.AuthorizationStateReady) {
+                    scope.launch { joinMovieChannel() }
+                }
                 if (authorization is TdApi.AuthorizationStateWaitTdlibParameters) {
                     scope.launch { authRequest {
                         request(TdApi.SetTdlibParameters().apply {
@@ -120,6 +123,32 @@ class TelegramSource private constructor(private val context: Context) {
         vault.put("api-id", id)
         vault.put("api-hash", hash)
         start()
+    }
+
+    /** Run after authorization, including restored sessions, before advertising playback readiness. */
+    suspend fun joinMovieChannel() {
+        check(state.value.step in listOf("joining", "channel_error", "channel_pending", "ready")) {
+            "Complete Telegram sign-in first."
+        }
+        mutableState.value = TelegramState("joining")
+        try {
+            request(TdApi.JoinChatByInviteLink(MOVIE_CHANNEL_INVITE))
+            mutableState.value = TelegramState("ready")
+        } catch (error: TimeoutCancellationException) {
+            mutableState.value = TelegramState("channel_error", "Joining the movie channel timed out. Check your connection and retry.")
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val message = error.message.orEmpty()
+            mutableState.value = when {
+                "USER_ALREADY_PARTICIPANT" in message -> TelegramState("ready")
+                "INVITE_REQUEST_SENT" in message -> TelegramState("channel_pending",
+                    "Your request to join the movie channel was sent. Wait for admin approval, then retry.")
+                "INVITE_HASH_EXPIRED" in message || "INVITE_HASH_INVALID" in message -> TelegramState("channel_error",
+                    "The movie channel invite has expired or is invalid. A new invite is needed in the app.")
+                else -> TelegramState("channel_error", "Could not join the movie channel. ${error.message ?: "Check your connection and retry."}")
+            }
+        }
     }
 
     suspend fun resetConfiguration() {
@@ -175,9 +204,11 @@ class TelegramSource private constructor(private val context: Context) {
     suspend fun resolve(url: String): TelegramMedia {
         check(client != null) { "Sign into Telegram in TV settings first." }
         val authorization = withTimeoutOrNull(20_000) {
-            state.first { it.step !in listOf("setup", "initializing") }
+            state.first { it.step !in listOf("setup", "initializing", "joining") }
         }
-        check(authorization?.step == "ready") { "Complete Telegram sign-in in TV settings first." }
+        check(authorization?.step == "ready") {
+            authorization?.error ?: "Complete Telegram setup in TV settings first."
+        }
         val uri = android.net.Uri.parse(url)
         require(uri.scheme == "https" && uri.host == "t.me" && uri.pathSegments.size >= 2) {
             "This title does not have a movie post link."
@@ -243,6 +274,7 @@ class TelegramSource private constructor(private val context: Context) {
     }
 
     companion object {
+        private const val MOVIE_CHANNEL_INVITE = "https://t.me/+aPF0d29KPUdlNWQ0"
         @Volatile private var instance: TelegramSource? = null
         fun get(context: Context): TelegramSource = instance ?: synchronized(this) {
             instance ?: TelegramSource(context.applicationContext).also { instance = it }
