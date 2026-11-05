@@ -2,16 +2,12 @@ package com.movieworld.android
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
-import android.util.LruCache
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,14 +20,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.movieworld.android.ui.components.RemoteImage
+import com.movieworld.android.ui.theme.MovieWorldTheme
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -42,7 +35,7 @@ class MainActivity : ComponentActivity() {
         val catalogue = Catalogue(applicationContext)
         val preferences = getSharedPreferences("movie-world", MODE_PRIVATE)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MovieWorldTheme {
                 Surface(Modifier.fillMaxSize()) {
                     var favourites by remember {
                         mutableStateOf(preferences.getStringSet("favourites", emptySet()).orEmpty().toSet())
@@ -176,7 +169,7 @@ private fun MovieWorld(
                     items(shown, key = { it.id }) { movie ->
                         Card(Modifier.fillMaxWidth().clickable { selectedId = movie.id }) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Artwork(movie.poster, Modifier.width(60.dp).height(88.dp))
+                                RemoteImage(movie.poster, null, Modifier.width(60.dp).height(88.dp))
                                 Column(Modifier.padding(12.dp)) {
                                     Text(movie.title, style = MaterialTheme.typography.titleMedium)
                                     Text(movie.subtitle(), style = MaterialTheme.typography.bodySmall)
@@ -221,7 +214,7 @@ private fun DetailScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { TextButton(onClick = back) { Text("Back to catalogue") } }
-        item { Artwork(details?.backdrop ?: movie.poster, Modifier.fillMaxWidth().height(220.dp)) }
+        item { RemoteImage(details?.backdrop ?: movie.poster, null, Modifier.fillMaxWidth().height(220.dp)) }
         item { Text(movie.title, style = MaterialTheme.typography.headlineMedium) }
         item { Text(movie.subtitle()) }
         item { OutlinedButton(onClick = toggleFavourite) { Text(if (favourite) "Remove favourite" else "Add favourite") } }
@@ -260,35 +253,4 @@ private inline fun <T> catalogueResult(block: () -> T): T? = try {
     null
 } catch (_: android.database.sqlite.SQLiteException) {
     null
-}
-
-private val artworkCache = object : LruCache<String, ImageBitmap>(24 * 1024 * 1024) {
-    override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
-}
-
-@Composable
-private fun Artwork(url: String?, modifier: Modifier) {
-    val image by produceState<ImageBitmap?>(null, url) {
-        value = null
-        if (url?.startsWith("https://") == true) {
-            value = artworkCache.get(url) ?: withContext(Dispatchers.IO) {
-                try {
-                    val connection = URL(url).openConnection() as HttpURLConnection
-                    try {
-                        connection.connectTimeout = 5_000
-                        connection.readTimeout = 5_000
-                        connection.inputStream.use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
-                            ?.also { artworkCache.put(url, it) }
-                    } finally {
-                        connection.disconnect()
-                    }
-                } catch (_: IOException) {
-                    null
-                }
-            }
-        }
-    }
-    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-        image?.let { Image(it, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-    }
 }
