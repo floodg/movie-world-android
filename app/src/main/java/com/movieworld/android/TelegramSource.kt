@@ -219,10 +219,15 @@ class TelegramSource private constructor(private val context: Context) {
         catch (_: Exception) { /* A fully loaded list returns 404. Link resolution remains authoritative. */ }
         val message = request(TdApi.GetMessageLinkInfo(url)).message
             ?: error("This Telegram post is unavailable. Check channel membership in Telegram.")
-        return resolveAlbumVideo(message) { current ->
-            // TDLib IDs are opaque: fetch the next newer message through history.
-            request(TdApi.GetChatHistory(current.chatId, current.id, -1, 2, false))
-                .messages.filter { it.id > current.id }.minByOrNull { it.id }
+        // History can return only the cached poster even with onlyLocal=false.
+        // Resolve adjacent Telegram post links directly; the resolver still checks
+        // chat and album identity before accepting any video.
+        var postId = uri.lastPathSegment?.toLongOrNull()
+            ?: error("This title does not have a valid Telegram post link.")
+        val postPrefix = url.substringBefore('?').substringBeforeLast('/')
+        return resolveAlbumVideo(message) {
+            postId += 1
+            request(TdApi.GetMessageLinkInfo("$postPrefix/$postId")).message
         } ?: error("No video was found in this Telegram album. Open it in Telegram to check the post.")
     }
 
