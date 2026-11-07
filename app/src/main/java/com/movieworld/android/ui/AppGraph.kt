@@ -3,14 +3,17 @@ package com.movieworld.android.ui
 import android.content.Context
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.movieworld.android.Catalogue
+import com.movieworld.android.CloudSync
 import com.movieworld.android.Favourites
 import com.movieworld.android.PlaybackDatabase
 
 /** Process-wide dependencies handed to ViewModels through composition. */
 class AppGraph(context: Context, val openTelegram: (String) -> Unit) {
-    val catalogue = Catalogue(context.applicationContext)
-    val favourites = Favourites(context)
-    val progress: PlaybackDatabase.Access by lazy { PlaybackDatabase.get(context.applicationContext).access() }
+    private val app = context.applicationContext
+    val catalogue = Catalogue(app)
+    val favourites = Favourites.get(app)
+    val cloud = CloudSync.get(app)
+    val progress: PlaybackDatabase.Access by lazy { PlaybackDatabase.get(app).access() }
 }
 
 val LocalAppGraph = staticCompositionLocalOf<AppGraph> { error("AppGraph not provided") }

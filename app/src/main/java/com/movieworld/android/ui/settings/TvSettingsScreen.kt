@@ -65,6 +65,7 @@ import com.movieworld.android.Playback
 import com.movieworld.android.Renderer
 import com.movieworld.android.TelegramSource
 import com.movieworld.android.TvNetwork
+import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.components.PrimaryButton
 import com.movieworld.android.ui.components.SecondaryButton
@@ -80,9 +81,14 @@ import kotlinx.coroutines.withContext
 fun TvSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val cloud = LocalAppGraph.current.cloud
+    val account by cloud.account.collectAsStateWithLifecycle()
     val source = remember { TelegramSource.get(context) }
     val telegram by source.state.collectAsStateWithLifecycle()
     val playback by Playback.state.collectAsStateWithLifecycle()
+    var accountEmail by rememberSaveable { mutableStateOf("") }
+    var accountPassword by remember { mutableStateOf("") }
+    var accountName by rememberSaveable { mutableStateOf("") }
     val prefs = remember { context.getSharedPreferences("tv", Context.MODE_PRIVATE) }
     var address by rememberSaveable { mutableStateOf(prefs.getString("description", "").orEmpty()) }
     var apiId by rememberSaveable { mutableStateOf("") }
@@ -161,6 +167,72 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                             save(tv)
                         }
                     })
+                }
+            }
+            item(key = "account") {
+                SettingsCard(
+                    title = "Account",
+                    icon = AppIcons.Bookmark,
+                    connected = account.signedIn,
+                    status = account.status,
+                ) {
+                    Text(
+                        "Sign in to sync favourites, resume points, and recently watched with the web app. TV and Telegram stay on this phone.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(Dimens.lg))
+                    if (!account.configured) {
+                        Text(account.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (account.signedIn) {
+                        Text(account.displayName ?: account.email ?: "Signed in", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(Dimens.sm))
+                        OutlinedTextField(
+                            accountName.ifBlank { account.displayName.orEmpty() },
+                            { accountName = it },
+                            Modifier.fillMaxWidth(),
+                            label = { Text("Display name") },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium,
+                        )
+                        Spacer(Modifier.height(Dimens.md))
+                        PrimaryButton("Save name", enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                            runWork { cloud.saveDisplayName(accountName) }
+                        })
+                        Spacer(Modifier.height(Dimens.sm))
+                        SecondaryButton("Sign out", enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                            runWork { cloud.signOut() }
+                        })
+                        Spacer(Modifier.height(Dimens.sm))
+                        SecondaryButton("Sync now", enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                            cloud.reconcileNow()
+                        })
+                    } else {
+                        OutlinedTextField(accountEmail, { accountEmail = it }, Modifier.fillMaxWidth(),
+                            label = { Text("Email") }, singleLine = true, shape = MaterialTheme.shapes.medium)
+                        Spacer(Modifier.height(Dimens.sm))
+                        OutlinedTextField(
+                            accountPassword, { accountPassword = it }, Modifier.fillMaxWidth(),
+                            label = { Text("Password") }, singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            shape = MaterialTheme.shapes.medium,
+                        )
+                        Spacer(Modifier.height(Dimens.sm))
+                        OutlinedTextField(accountName, { accountName = it }, Modifier.fillMaxWidth(),
+                            label = { Text("Display name") }, singleLine = true, shape = MaterialTheme.shapes.medium)
+                        Spacer(Modifier.height(Dimens.md))
+                        PrimaryButton("Sign in", enabled = !busy && accountEmail.isNotBlank() && accountPassword.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(), onClick = {
+                                runWork { cloud.signIn(accountEmail, accountPassword); accountPassword = "" }
+                            })
+                        Spacer(Modifier.height(Dimens.sm))
+                        SecondaryButton("Sign up", enabled = !busy && accountEmail.isNotBlank() && accountPassword.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(), onClick = {
+                                runWork {
+                                    cloud.signUp(accountEmail, accountPassword, accountName)
+                                    accountPassword = ""
+                                }
+                            })
+                    }
                 }
             }
             item(key = "telegram") {

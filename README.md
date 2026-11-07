@@ -5,7 +5,7 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
 ## Features
 
 - Browse the catalogue offline by genre, IMDb rating, title, actor, and release year.
-- View movie details and cast, and save favourites on the phone.
+- View movie details and cast, and save favourites on the phone (My List), with optional cloud sync to the web app.
 - Open the original movie post in Telegram over Wi-Fi or mobile data.
 - Download a movie through Telegram and stream it from the phone to a compatible TV.
 - Resume TV playback through Continue Watching, with pause, stop, and start-over controls.
@@ -17,7 +17,16 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
 3. Select a physical Android phone running Android 8.0 or later and run the app configuration.
 4. For terminal builds on Windows, set JAVA_HOME to a suitable JDK, then run the commands below.
 
-The catalogue is included at app/src/main/assets/movie-world.sqlite. The app reads an on-device copy and keeps watch progress in a separate Room database. Posters and backdrops are fetched with Coil and cached on disk; without internet they fall back to a placeholder tile.
+The catalogue is included at app/src/main/assets/movie-world.sqlite. The app reads an on-device copy and keeps favourites and watch progress in a separate Room database. Posters and backdrops are fetched with Coil and cached on disk; without internet they fall back to a placeholder tile.
+
+To sync My List, resume points, and recently watched with the web app, add your Supabase project values to `local.properties` (gitignored):
+
+```
+supabase.url=https://YOUR_PROJECT_REF.supabase.co
+supabase.publishableKey=sb_publishable_…
+```
+
+Then open TV settings → Account to sign up or sign in. Sync runs after local changes and when the app returns to the foreground. Telegram API credentials and the selected TV stay on the phone.
 
 The interface is a dark, poster-led layout: a Home screen with a featured title and rows (Continue Watching, My List, Top Rated, popular genres), a Search tab with title/actor search, genre chips and a year-range filter sheet, a My List tab, a full-bleed movie detail screen, and a persistent "now playing on TV" bar that expands into playback controls. TV settings open from the cast icon on Home. See docs/ui-redesign-plan.md.
 

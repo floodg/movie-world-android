@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application") version "9.2.1"
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.10"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.2.10"
 }
 android {
     namespace = "com.movieworld.android"
@@ -10,10 +11,22 @@ android {
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
+        fun prop(name: String): String {
+            val file = rootProject.file("local.properties")
+            if (!file.exists()) return ""
+            val prefix = "$name="
+            val value = file.readLines().firstOrNull { it.startsWith(prefix) }?.substring(prefix.length).orEmpty()
+            return value.replace("\\", "\\\\").replace("\"", "\\\"")
+        }
+        buildConfigField("String", "SUPABASE_URL", "\"${prop("supabase.url")}\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"${prop("supabase.publishableKey")}\"")
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 dependencies {
     androidTestImplementation("androidx.test:runner:1.6.2")
@@ -36,4 +49,9 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    implementation(platform("io.github.jan-tennert.supabase:bom:3.2.2"))
+    implementation("io.github.jan-tennert.supabase:auth-kt")
+    implementation("io.github.jan-tennert.supabase:postgrest-kt")
+    implementation("io.ktor:ktor-client-okhttp:3.0.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }
