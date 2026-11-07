@@ -219,18 +219,11 @@ class TelegramSource private constructor(private val context: Context) {
         catch (_: Exception) { /* A fully loaded list returns 404. Link resolution remains authoritative. */ }
         val message = request(TdApi.GetMessageLinkInfo(url)).message
             ?: error("This Telegram post is unavailable. Check channel membership in Telegram.")
-        return when (val content = message.content) {
-            is TdApi.MessageVideo -> TelegramMedia(content.video.video, content.video.mimeType.ifBlank { "video/mp4" })
-            is TdApi.MessageDocument -> {
-                val document = content.document
-                val mime = document.mimeType.ifBlank {
-                    if (document.fileName.endsWith(".mkv", true)) "video/x-matroska" else ""
-                }
-                require(mime.startsWith("video/")) { "The linked post does not contain a video." }
-                TelegramMedia(document.document, mime)
-            }
-            else -> error("The linked post does not contain video. Open it in Telegram to check the post.")
-        }
+        return resolveAlbumVideo(message) { current ->
+            // TDLib IDs are opaque: fetch the next newer message through history.
+            request(TdApi.GetChatHistory(current.chatId, current.id, -1, 2, false))
+                .messages.filter { it.id > current.id }.minByOrNull { it.id }
+        } ?: error("No video was found in this Telegram album. Open it in Telegram to check the post.")
     }
 
     suspend fun prepare(media: TelegramMedia): TelegramMedia {
