@@ -1,273 +1,130 @@
 package com.movieworld.android
 
 import android.content.Context
-import android.util.Log
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.Auth
-import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.providers.builtin.Email
-import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.from
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
+import android.net.ConnectivityManager
+import android.net.Network
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import java.time.Instant
+import kotlinx.serialization.encodeToString
+import java.util.UUID
 
 data class AccountState(
-    val configured: Boolean = false,
-    val email: String? = null,
-    val displayName: String? = null,
-    val signedIn: Boolean = false,
-    val status: String = "Cloud sync is not configured",
+    val configured: Boolean = true, val signedIn: Boolean = false,
+    val status: String = "Connect Telegram in settings", val lastSync: Long = 0,
+    val pending: Boolean = false,
 )
 
-/**
- * Pushes dirty Room rows and pulls newer cloud rows. Never blocks TV playback.
- * No-ops when Supabase URL / publishable key are missing from BuildConfig.
- */
+/** Room is authoritative offline. Telegram is an eventually consistent snapshot transport. */
 class CloudSync private constructor(context: Context) {
     private val app = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
-    private var debounce: Job? = null
-    private val prefs = app.getSharedPreferences("cloud-sync", Context.MODE_PRIVATE)
-    private val mutableAccount = MutableStateFlow(AccountState())
-    val account: StateFlow<AccountState> = mutableAccount.asStateFlow()
-
-    private val client: SupabaseClient? = run {
-        val url = BuildConfig.SUPABASE_URL.trim()
-        val key = BuildConfig.SUPABASE_PUBLISHABLE_KEY.trim()
-        if (url.isEmpty() || key.isEmpty()) null
-        else createSupabaseClient(url, key) {
-            install(Auth)
-            install(Postgrest)
-        }
+    private val prefs = app.getSharedPreferences("telegram-sync", Context.MODE_PRIVATE)
+    private val device = prefs.getString("device", null) ?: UUID.randomUUID().toString().also {
+        check(prefs.edit().putString("device", it).commit())
     }
+    private val source = TelegramSource.get(app)
+    private val store: PersonalDataStore = TelegramPersonalStore(app, source)
+    private val db = PlaybackDatabase.get(app)
+    private val access = db.access()
+    private val repository = PersonalDataRepository(db, device)
+    private val mutableAccount = MutableStateFlow(AccountState())
+    val account = mutableAccount.asStateFlow()
+    private var scheduled: Job? = null
+    private var lastUpload = 0L
+    private var retryAt = 0L
 
     init {
-        SyncHooks.schedule = { delayMs -> schedule(delayMs) }
-        if (client == null) {
-            mutableAccount.value = AccountState(configured = false, status = "Add supabase.url and supabase.publishableKey to local.properties")
-        } else {
-            mutableAccount.value = AccountState(configured = true, status = "Signed out")
-            scope.launch {
-                client.auth.sessionStatus.collectLatest { status ->
-                    when (status) {
-                        is SessionStatus.Authenticated -> {
-                            val email = status.session.user?.email
-                            val profile = loadProfile()
-                            mutableAccount.value = AccountState(
-                                configured = true,
-                                email = email,
-                                displayName = profile?.displayName,
-                                signedIn = true,
-                                status = "Signed in · syncing…",
-                            )
-                            reconcile()
-                        }
-                        else -> mutableAccount.value = AccountState(configured = true, signedIn = false, status = "Signed out")
-                    }
-                }
+        SyncHooks.schedule = { schedule(it) }
+        source.start()
+        scope.launch {
+            source.state.collect { state ->
+                if (state.step in listOf("joining", "ready", "channel_error", "channel_pending")) reconcileNow()
+                else mutableAccount.value = mutableAccount.value.copy(signedIn = false, status = "Connect Telegram in settings")
             }
+        }
+        val network = app.getSystemService(ConnectivityManager::class.java)
+        network.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { reconcileNow() }
+        })
+        scope.launch {
+            while (isActive) { delay(60_000); reconcileNow() }
         }
     }
 
     fun schedule(delayMs: Long = 400) {
-        if (client == null) return
-        debounce?.cancel()
-        debounce = scope.launch {
-            delay(delayMs)
+        mutableAccount.value = mutableAccount.value.copy(pending = true)
+        if (scheduled?.isActive == true) {
+            if (delayMs != 0L) return // Continuous playback updates must not starve the upload.
+            scheduled?.cancel()
+        }
+        scheduled = scope.launch {
+            val throttle = if (Playback.state.value.playing) (lastUpload + 60_000 - System.currentTimeMillis()).coerceAtLeast(0) else 0
+            delay(if (delayMs == 0L) 0 else maxOf(delayMs, throttle))
+            scheduled = null
             reconcile()
         }
     }
+    fun reconcileNow() { scope.launch { reconcile() } }
 
-    fun reconcileNow() {
-        if (client == null) return
-        scope.launch { reconcile() }
-    }
-
-    suspend fun signUp(email: String, password: String, displayName: String?) {
-        val supabase = client ?: error("Cloud sync is not configured")
-        supabase.auth.signUpWith(Email) {
-            this.email = email.trim()
-            this.password = password
-            if (!displayName.isNullOrBlank()) {
-                data = buildJsonObject { put("display_name", displayName.trim()) }
+    private suspend fun sync(forceUpload: Boolean = false): Long {
+        val owner = store.accountId()
+        check(access.syncValue("owner") == owner.toString() || !Playback.state.value.active) {
+            "Stop playback before switching sync accounts"
+        }
+        val changedAccount = access.syncValue("owner") != owner.toString()
+        repository.bind(owner)
+        if (changedAccount) { Favourites.get(app).refresh(); Playback.revision.value += 1 }
+        mutableAccount.value = mutableAccount.value.copy(signedIn = true,
+            lastSync = access.syncValue("last-$owner")?.toLongOrNull() ?: 0)
+        val remote = store.pull()
+        check(store.accountId() == owner) { "Telegram account changed during sync" }
+        repository.merge(remote, owner)
+        Favourites.get(app).refresh(); Playback.revision.value += 1
+        val upload = repository.snapshot(owner)
+        val previous = access.syncValue("published-$owner")
+        val encoded = SnapshotCodec.json.encodeToString(upload)
+        // Republish when the remote attachment was removed, even if local data did not change.
+        if (previous != encoded || remote.none { it == upload }) {
+            if (!forceUpload && Playback.state.value.playing && System.currentTimeMillis() < lastUpload + 60_000) {
+                mutableAccount.value = mutableAccount.value.copy(status = "Playback changes pending sync", pending = true)
+                return owner
             }
+            store.publish(upload)
+            lastUpload = System.currentTimeMillis()
+            repository.state("published-$owner", encoded)
         }
-        if (!displayName.isNullOrBlank() && supabase.auth.currentSessionOrNull() != null) {
-            saveDisplayName(displayName.trim())
+        upload.favourites.forEach { access.clearFavouriteDirty(it.movieId, it.updated) }
+        upload.progress.forEach { access.clearProgressDirty(it.movieId, it.updated) }
+        Favourites.get(app).refresh(); Playback.revision.value += 1
+        val now = System.currentTimeMillis()
+        repository.state("last-$owner", now.toString())
+        mutableAccount.value = AccountState(signedIn = true, status = "Synced to Saved Messages", lastSync = now,
+            pending = access.dirtyFavourites().isNotEmpty() || access.dirtyProgress().isNotEmpty())
+        try { store.cleanup(upload) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) {
+            mutableAccount.value = mutableAccount.value.copy(status = "Synced to Saved Messages · backup cleanup pending")
         }
+        return owner
     }
-
-    suspend fun signIn(email: String, password: String) {
-        val supabase = client ?: error("Cloud sync is not configured")
-        supabase.auth.signInWith(Email) {
-            this.email = email.trim()
-            this.password = password
-        }
-    }
-
-    suspend fun signOut() {
-        client?.auth?.signOut()
-    }
-
-    suspend fun saveDisplayName(displayName: String?) {
-        val supabase = client ?: return
-        val userId = supabase.auth.currentUserOrNull()?.id ?: return
-        val name = displayName?.trim()?.ifEmpty { null }
-        supabase.from("profiles").update(
-            ProfileUpdate(displayName = name, updatedAt = Instant.now().toString())
-        ) {
-            filter { eq("id", userId) }
-        }
-        mutableAccount.value = mutableAccount.value.copy(displayName = name, status = "Display name saved")
-    }
-
     private suspend fun reconcile() = mutex.withLock {
-        val supabase = client ?: return
-        val user = supabase.auth.currentUserOrNull() ?: return
-        val access = PlaybackDatabase.get(app).access()
-        try {
-            pushDirty(access, user.id)
-            pullRemote(access, user.id)
-            Favourites.get(app).refresh()
-            Playback.revision.value += 1
-            val dirtyLeft = access.dirtyFavourites().isNotEmpty() || access.dirtyProgress().isNotEmpty()
-            mutableAccount.value = mutableAccount.value.copy(
-                signedIn = true,
-                email = user.email,
-                displayName = loadProfile()?.displayName ?: mutableAccount.value.displayName,
-                status = if (dirtyLeft) "Signed in · offline changes pending" else "Synced",
-            )
-            prefs.edit().putLong("last-pull", System.currentTimeMillis()).apply()
-        } catch (error: Exception) {
-            Log.w(TAG, "Cloud sync failed", error)
-            mutableAccount.value = mutableAccount.value.copy(
-                status = error.message?.take(120) ?: "Sync failed · local copy kept"
-            )
+        if (System.currentTimeMillis() < retryAt) return@withLock
+        try { sync(); retryAt = 0 }
+        catch (error: TimeoutCancellationException) {
+            mutableAccount.value = mutableAccount.value.copy(status = "Sync timed out; local data kept", pending = true)
+        }
+        catch (error: CancellationException) { throw error }
+        catch (error: Exception) {
+            if (error is TelegramRequestException && error.code == 429) {
+                retryAt = System.currentTimeMillis() + (error.retryAfterSeconds ?: 60).coerceAtLeast(1) * 1000
+            }
+            mutableAccount.value = mutableAccount.value.copy(status = safeSetupError(error), pending = true)
         }
     }
-
-    private suspend fun pushDirty(access: PlaybackDatabase.Access, userId: String) {
-        val supabase = client ?: return
-        for (row in access.dirtyFavourites()) {
-            supabase.from("favourites").upsert(
-                FavouriteRow(
-                    userId = userId,
-                    movieId = row.movieId.toLong(),
-                    removedAt = row.removed?.let { Instant.ofEpochMilli(it).toString() },
-                    updatedAt = Instant.ofEpochMilli(row.updated).toString(),
-                )
-            )
-            access.clearFavouriteDirty(row.movieId, row.updated)
-        }
-        for (row in access.dirtyProgress()) {
-            supabase.from("watch_progress").upsert(
-                WatchRow(
-                    userId = userId,
-                    movieId = row.movieId.toLong(),
-                    positionSeconds = row.position.toInt().coerceAtLeast(0),
-                    durationSeconds = row.duration.takeIf { it > 0 }?.toInt(),
-                    finished = row.finished,
-                    updatedAt = Instant.ofEpochMilli(row.updated).toString(),
-                )
-            )
-            access.clearProgressDirty(row.movieId, row.updated)
-        }
-    }
-
-    private suspend fun pullRemote(access: PlaybackDatabase.Access, userId: String) {
-        val supabase = client ?: return
-        val favourites = supabase.from("favourites").select {
-            filter { eq("user_id", userId) }
-        }.decodeList<FavouriteRow>()
-        for (row in favourites) {
-            Favourites.get(app).upsertFromCloud(
-                movieId = row.movieId.toString(),
-                updatedMs = parseInstantMs(row.updatedAt),
-                removedMs = row.removedAt?.let(::parseInstantMs),
-            )
-        }
-        val progress = supabase.from("watch_progress").select {
-            filter { eq("user_id", userId) }
-        }.decodeList<WatchRow>()
-        for (row in progress) {
-            val updatedMs = parseInstantMs(row.updatedAt)
-            val existing = access.find(row.movieId.toString())
-            if (existing != null && existing.updated > updatedMs) continue
-            access.save(PlaybackDatabase.Progress().apply {
-                movieId = row.movieId.toString()
-                position = row.positionSeconds.toLong()
-                duration = row.durationSeconds?.toLong() ?: 0L
-                updated = updatedMs
-                finished = row.finished
-                dirty = false
-            })
-        }
-    }
-
-    private suspend fun loadProfile(): ProfileRow? {
-        val supabase = client ?: return null
-        val userId = supabase.auth.currentUserOrNull()?.id ?: return null
-        return supabase.from("profiles").select {
-            filter { eq("id", userId) }
-        }.decodeSingleOrNull<ProfileRow>()
-    }
-
-    private fun parseInstantMs(value: String): Long = try {
-        Instant.parse(value).toEpochMilli()
-    } catch (_: Exception) {
-        System.currentTimeMillis()
-    }
-
-    @Serializable
-    private data class ProfileRow(
-        val id: String,
-        @SerialName("display_name") val displayName: String? = null,
-    )
-
-    @Serializable
-    private data class ProfileUpdate(
-        @SerialName("display_name") val displayName: String?,
-        @SerialName("updated_at") val updatedAt: String,
-    )
-
-    @Serializable
-    private data class FavouriteRow(
-        @SerialName("user_id") val userId: String,
-        @SerialName("movie_id") val movieId: Long,
-        @SerialName("removed_at") val removedAt: String? = null,
-        @SerialName("updated_at") val updatedAt: String,
-    )
-
-    @Serializable
-    private data class WatchRow(
-        @SerialName("user_id") val userId: String,
-        @SerialName("movie_id") val movieId: Long,
-        @SerialName("position_seconds") val positionSeconds: Int,
-        @SerialName("duration_seconds") val durationSeconds: Int? = null,
-        val finished: Boolean = false,
-        @SerialName("updated_at") val updatedAt: String,
-    )
-
     companion object {
-        private const val TAG = "CloudSync"
         @Volatile private var instance: CloudSync? = null
         fun get(context: Context): CloudSync = instance ?: synchronized(this) {
             instance ?: CloudSync(context).also { instance = it }

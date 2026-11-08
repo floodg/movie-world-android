@@ -16,12 +16,12 @@ import androidx.room.migration.Migration;
 import androidx.sqlite.db.SupportSQLiteDatabase;
 import java.util.List;
 
-@Database(entities = {PlaybackDatabase.Progress.class, PlaybackDatabase.Favourite.class}, version = 2, exportSchema = false)
+@Database(entities = {PlaybackDatabase.Progress.class, PlaybackDatabase.Favourite.class, PlaybackDatabase.SyncState.class}, version = 3, exportSchema = false)
 public abstract class PlaybackDatabase extends RoomDatabase {
     public abstract Access access();
     private static volatile PlaybackDatabase instance;
 
-    private static final Migration MIGRATION_1_2 = new Migration(1, 2) {
+    static final Migration MIGRATION_1_2 = new Migration(1, 2) {
         @Override public void migrate(@NonNull SupportSQLiteDatabase db) {
             db.execSQL("ALTER TABLE progress ADD COLUMN finished INTEGER NOT NULL DEFAULT 0");
             db.execSQL("ALTER TABLE progress ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
@@ -35,13 +35,21 @@ public abstract class PlaybackDatabase extends RoomDatabase {
         }
     };
 
+    static final Migration MIGRATION_2_3 = new Migration(2, 3) {
+        @Override public void migrate(@NonNull SupportSQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS sync_state (`key` TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)");
+            db.execSQL("ALTER TABLE progress ADD COLUMN origin TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE favourites ADD COLUMN origin TEXT NOT NULL DEFAULT ''");
+        }
+    };
+
     public static PlaybackDatabase get(Context context) {
         if (instance == null) {
             synchronized (PlaybackDatabase.class) {
                 if (instance == null) {
                     instance = Room.databaseBuilder(
                         context.getApplicationContext(), PlaybackDatabase.class, "playback.sqlite"
-                    ).addMigrations(MIGRATION_1_2).build();
+                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build();
                 }
             }
         }
@@ -56,6 +64,7 @@ public abstract class PlaybackDatabase extends RoomDatabase {
         public long updated;
         public boolean finished;
         public boolean dirty;
+        @NonNull public String origin = "";
     }
 
     @Entity(tableName = "favourites")
@@ -64,10 +73,22 @@ public abstract class PlaybackDatabase extends RoomDatabase {
         public long updated;
         @Nullable public Long removed;
         public boolean dirty;
+        @NonNull public String origin = "";
+    }
+
+    @Entity(tableName = "sync_state")
+    public static class SyncState {
+        @PrimaryKey @NonNull public String key = "";
+        @NonNull public String value = "";
     }
 
     @Dao
     public interface Access {
+        @Query("SELECT value FROM sync_state WHERE `key` = :key") String syncValue(String key);
+        @Insert(onConflict = OnConflictStrategy.REPLACE) void saveSyncValue(SyncState state);
+        @Query("SELECT * FROM progress") List<Progress> allProgress();
+        @Query("DELETE FROM progress") void deleteProgress();
+        @Query("DELETE FROM favourites") void deleteFavourites();
         @Query("SELECT * FROM progress WHERE finished = 0 AND position >= 15 AND (duration = 0 OR position < duration - 30) ORDER BY updated DESC LIMIT 20")
         List<Progress> continuing();
 

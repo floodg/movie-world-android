@@ -139,9 +139,6 @@ fun HomeContent(
                     progress = { movie -> continuing?.firstOrNull { it.movie.id == movie.id }?.progress?.let(::watchedFraction) },
                 )
             }
-            if (state.recentlyWatched?.isEmpty() != true) item(key = "recent") {
-                SectionRow("Recently Watched", state.recentlyWatched, onOpen = { onOpen(it.id) })
-            }
             if (state.myList?.isEmpty() != true) item(key = "my-list") { SectionRow("My List", state.myList, onOpen = { onOpen(it.id) }) }
             if (state.topRated?.isEmpty() != true) item(key = "top-rated") { SectionRow("Top Rated", state.topRated, onOpen = { onOpen(it.id) }) }
             state.genreRows.filter { it.movies?.isEmpty() != true }.forEach { row ->

@@ -45,7 +45,7 @@ class Favourites private constructor(context: Context) {
             val existing = access.findFavourite(id)
             val row = PlaybackDatabase.Favourite().apply {
                 movieId = id
-                updated = now
+                updated = maxOf(now, (existing?.updated ?: 0) + 1)
                 dirty = true
                 removed = if (existing == null || existing.removed != null) null else now
             }

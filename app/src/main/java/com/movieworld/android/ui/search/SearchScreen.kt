@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -26,6 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -39,12 +42,17 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -52,6 +60,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.movieworld.android.Actor
 import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.components.bottomClearance
@@ -77,6 +86,10 @@ fun SearchScreen(onOpen: (String) -> Unit, contentPadding: PaddingValues) {
         onClearFilters = viewModel::clearFilters,
         onOpen = onOpen,
         contentPadding = contentPadding,
+        onActor = viewModel::selectActor,
+        onDismissActors = viewModel::dismissActors,
+        onShowActors = viewModel::showActors,
+        onSearchSubmit = viewModel::submit,
     )
 }
 
@@ -90,37 +103,67 @@ fun SearchContent(
     onClearFilters: () -> Unit,
     onOpen: (String) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
+    onActor: (Actor) -> Unit = {},
+    onDismissActors: () -> Unit = {},
+    onShowActors: () -> Unit = {},
+    onSearchSubmit: () -> Unit = {},
 ) {
     var showFilters by rememberSaveable { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
+    val density = LocalDensity.current
+    var fieldWidth by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Dimens.screenPadding, vertical = Dimens.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextField(
-                value = state.query,
-                onValueChange = onQuery,
-                modifier = Modifier.weight(1f).semantics { contentDescription = "Search" },
-                singleLine = true,
-                shape = PillShape,
-                placeholder = { Text(if (state.byActor) "Search by actor" else "Search by title") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (state.query.isNotEmpty()) IconButton(onClick = { onQuery("") }) {
-                        Icon(Icons.Filled.Clear, contentDescription = "Clear search")
+            Box(Modifier.weight(1f).onGloballyPositioned { fieldWidth = it.size.width }) {
+                TextField(
+                    value = state.query,
+                    onValueChange = onQuery,
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onShowActors() }
+                        .semantics { contentDescription = "Search" },
+                    singleLine = true,
+                    shape = PillShape,
+                    placeholder = { Text(if (state.byActor) "Search by actor" else "Search by title") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (state.query.isNotEmpty()) IconButton(onClick = { onQuery("") }) {
+                            Icon(Icons.Filled.Clear, contentDescription = "Clear search")
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onSearchSubmit(); keyboard?.hide() }),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                    ),
+                )
+                DropdownMenu(
+                    expanded = state.byActor && state.actorSuggestionsVisible && !state.actors.isNullOrEmpty(),
+                    onDismissRequest = onDismissActors,
+                    modifier = Modifier.width(with(density) { fieldWidth.toDp() }).heightIn(max = 320.dp),
+                    properties = PopupProperties(focusable = false),
+                ) {
+                    state.actors.orEmpty().forEach { actor ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    Text(actor.name, modifier = Modifier.weight(1f))
+                                    Spacer(Modifier.width(Dimens.md))
+                                    Text("${actor.movieCount} ${if (actor.movieCount == 1) "movie" else "movies"}",
+                                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            onClick = { onActor(actor); keyboard?.hide() },
+                        )
                     }
-                },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
-            )
+                }
+            }
             Spacer(Modifier.width(Dimens.sm))
             BadgedBox(badge = { if (state.filterCount > 0) Badge { Text(state.filterCount.toString()) } }) {
                 IconButton(onClick = { showFilters = true }, Modifier.semantics { contentDescription = "Filters" }) {
@@ -157,6 +200,18 @@ fun SearchContent(
             when {
                 state.failed -> StateMessage(Icons.Filled.Warning, "Could not read the offline catalogue", Modifier.align(Alignment.Center),
                     body = "Reinstall the app to restore the bundled catalogue.")
+                state.byActor && state.selectedActor == null -> StateMessage(
+                    Icons.Filled.Search,
+                    when {
+                        state.query.trim().length < 2 -> "Find an actor"
+                        state.actors == null -> "Searching actors…"
+                        state.actors.isEmpty() -> "No actors match"
+                        else -> "Choose an actor"
+                    },
+                    Modifier.align(Alignment.Center),
+                    body = if (state.query.trim().length < 2) "Type at least two letters of an actor’s name."
+                        else "Select an actor from the dropdown to view their movies.",
+                )
                 results != null && results.isEmpty() -> StateMessage(
                     Icons.Filled.Search, "No matching movies", Modifier.align(Alignment.Center),
                     body = "Try another spelling, switch between Title and Actor, or widen the filters.",

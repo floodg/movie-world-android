@@ -53,6 +53,7 @@ import androidx.navigation.compose.rememberNavController
 import com.movieworld.android.Playback
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.detail.DetailScreen
+import com.movieworld.android.ui.history.HistoryScreen
 import com.movieworld.android.ui.home.HomeScreen
 import com.movieworld.android.ui.list.MyListScreen
 import com.movieworld.android.ui.player.MiniPlayer
@@ -71,6 +72,7 @@ object Routes {
     const val HOME = "home"
     const val SEARCH = "search"
     const val LIST = "list"
+    const val HISTORY = "history"
     const val MOVIE = "movie/{id}"
     const val SETTINGS = "settings"
     fun movie(id: String) = "movie/$id"
@@ -84,6 +86,7 @@ private val tabs = listOf(
     Tab(Routes.HOME, "Home", Icons.Filled.Home),
     Tab(Routes.SEARCH, "Search", Icons.Filled.Search),
     Tab(Routes.LIST, "My List", AppIcons.Bookmark),
+    Tab(Routes.HISTORY, "History", AppIcons.History),
 )
 
 @Composable
@@ -151,6 +154,7 @@ fun MovieWorldApp(graph: AppGraph) {
                 }
                 composable(Routes.SEARCH) { SearchScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
                 composable(Routes.LIST) { MyListScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
+                composable(Routes.HISTORY) { HistoryScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
                 composable(Routes.MOVIE) { backStack ->
                     val id = backStack.arguments?.getString("id").orEmpty()
                     DetailScreen(id, onBack = { navController.popBackStack() },

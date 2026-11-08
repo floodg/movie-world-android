@@ -28,6 +28,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        CloudSync.get(applicationContext).reconcileNow()
+    }
+
     private fun openTelegram(link: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).addCategory(Intent.CATEGORY_BROWSABLE)
         try {

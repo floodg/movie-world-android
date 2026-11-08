@@ -51,6 +51,11 @@ private class TelegramVault(context: Context) {
     }
 }
 
+class TelegramRequestException(val code: Int, detail: String) : IllegalStateException("Telegram $code: $detail") {
+    val retryAfterSeconds: Long? = Regex("(?:retry after |FLOOD_WAIT_)([0-9]+)", RegexOption.IGNORE_CASE)
+        .find(detail)?.groupValues?.get(1)?.toLongOrNull()
+}
+
 data class TelegramState(val step: String = "setup", val error: String? = null)
 data class TelegramMedia(val file: TdApi.File, val mime: String)
 
@@ -61,6 +66,8 @@ class TelegramSource private constructor(private val context: Context) {
     private val mutableState = MutableStateFlow(TelegramState())
     val state = mutableState.asStateFlow()
 
+    private val sent = java.util.concurrent.ConcurrentHashMap<Long, TdApi.Message>()
+
     @Synchronized
     fun start() {
         if (client != null) return
@@ -68,6 +75,8 @@ class TelegramSource private constructor(private val context: Context) {
         System.loadLibrary("tdjni")
         Client.execute(TdApi.SetLogVerbosityLevel(0))
         client = Client.create({ update ->
+            if (update is TdApi.UpdateMessageSendSucceeded) sent[update.oldMessageId] = update.message
+            if (update is TdApi.UpdateMessageSendFailed) sent[update.oldMessageId] = update.message
             if (update is TdApi.UpdateAuthorizationState) {
                 val authorization = update.authorizationState
                 val step = when (authorization) {
@@ -91,7 +100,7 @@ class TelegramSource private constructor(private val context: Context) {
                             databaseEncryptionKey = databaseKey()
                             useFileDatabase = true
                             useChatInfoDatabase = true
-                            useMessageDatabase = false
+                            useMessageDatabase = true
                             useSecretChats = false
                             apiId = requireNotNull(vault.get("api-id")).toInt()
                             apiHash = requireNotNull(vault.get("api-hash"))
@@ -151,6 +160,15 @@ class TelegramSource private constructor(private val context: Context) {
         }
     }
 
+    suspend fun signOutAccount() {
+        check(!Playback.state.value.active) { "Stop TV playback before signing out of Telegram." }
+        request(TdApi.LogOut())
+        withTimeout(15_000) { state.first { it.step == "closed" } }
+        client = null
+        vault.clearCredentials()
+        mutableState.value = TelegramState()
+    }
+
     suspend fun resetConfiguration() {
         check(!Playback.state.value.active) { "Stop TV playback before changing Telegram settings." }
         if (client != null) {
@@ -191,7 +209,7 @@ class TelegramSource private constructor(private val context: Context) {
             } else active.send(function) { result ->
                 if (continuation.isActive) {
                     if (result is TdApi.Error) continuation.resumeWithException(
-                        IllegalStateException("Telegram ${result.code}: ${result.message}"))
+                        TelegramRequestException(result.code, result.message))
                     else {
                         @Suppress("UNCHECKED_CAST")
                         continuation.resume(result as T)
@@ -199,6 +217,19 @@ class TelegramSource private constructor(private val context: Context) {
                 }
             }
         }
+    }
+
+    suspend fun awaitSent(message: TdApi.Message): TdApi.Message = withTimeout(60_000) {
+        if (message.sendingState == null) return@withTimeout message
+        while (true) {
+            val result = sent.remove(message.id)
+            if (result != null) {
+                check(result.sendingState == null) { "Telegram upload failed; local data kept" }
+                return@withTimeout result
+            }
+            delay(200)
+        }
+        @Suppress("UNREACHABLE_CODE") message
     }
 
     suspend fun resolve(url: String): TelegramMedia {

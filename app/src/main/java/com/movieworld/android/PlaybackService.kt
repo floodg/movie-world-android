@@ -277,13 +277,13 @@ class PlaybackService : Service() {
                             movieId = currentId
                             this.position = seconds
                             this.duration = duration
-                            updated = System.currentTimeMillis()
+                            updated = maxOf(System.currentTimeMillis(), (db.find(currentId)?.updated ?: 0) + 1)
                             finished = duration > 0 && seconds >= duration - 30
                             dirty = true
                         }
                         db.save(progress)
                         Playback.revision.value += 1
-                        SyncHooks.schedule(1_500)
+                        SyncHooks.schedule(if (position.state == "PLAYING") 1_500 else 0)
                     }
                     Playback.mutableState.value = Playback.state.value.copy(
                         position = seconds.coerceAtLeast(0), duration = duration,
@@ -307,6 +307,7 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        CloudSync.get(this).reconcileNow()
         playback?.cancel()
         mediaServer?.close()
         wake?.let { if (it.isHeld) it.release() }

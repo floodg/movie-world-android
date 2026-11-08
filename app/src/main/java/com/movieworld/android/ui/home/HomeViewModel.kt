@@ -27,7 +27,6 @@ data class HomeUiState(
     val featuredLoaded: Boolean = false,
     val featuredResume: Long = 0,
     val continuing: List<Continuing>? = null,
-    val recentlyWatched: List<Movie>? = null,
     val myList: List<Movie>? = null,
     val topRated: List<Movie>? = null,
     val genreRows: List<GenreRow> = emptyList(),
@@ -75,19 +74,11 @@ class HomeViewModel(private val graph: AppGraph) : ViewModel() {
                 }
             }
         }
-        val recent = withContext(Dispatchers.IO) {
-            catalogueResult {
-                graph.progress.recentlyWatched(24).mapNotNull { progress ->
-                    graph.catalogue.movie(progress.movieId)
-                }
-            }
-        }
         mutableState.update { home ->
             val featuredId = home.featured?.movie?.id
             val resume = continuing?.firstOrNull { it.movie.id == featuredId }?.progress?.position ?: 0L
             home.copy(
                 continuing = continuing.orEmpty(),
-                recentlyWatched = recent.orEmpty(),
                 featuredResume = resume,
             )
         }
