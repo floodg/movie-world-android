@@ -60,6 +60,10 @@ data class TelegramState(val step: String = "setup", val error: String? = null)
 data class TelegramMedia(val file: TdApi.File, val mime: String)
 
 class TelegramSource private constructor(private val context: Context) {
+    private val retention = context.getSharedPreferences("movie-retention", Context.MODE_PRIVATE)
+    private val cacheLock = kotlinx.coroutines.sync.Mutex()
+    private var activeFileId: Int? = null
+    private var cleanupJob: Job? = null
     private val vault = TelegramVault(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var client: Client? = null
@@ -91,6 +95,14 @@ class TelegramSource private constructor(private val context: Context) {
                 mutableState.value = TelegramState(step)
                 if (authorization is TdApi.AuthorizationStateReady) {
                     scope.launch { joinMovieChannel() }
+                    if (cleanupJob?.isActive != true) cleanupJob = scope.launch {
+                        while (isActive) {
+                            try { cleanupExpiredMovies() }
+                            catch (error: CancellationException) { throw error }
+                            catch (_: Exception) { /* Retry on the next pass. */ }
+                            delay(60 * 60 * 1000L)
+                        }
+                    }
                 }
                 if (authorization is TdApi.AuthorizationStateWaitTdlibParameters) {
                     scope.launch { authRequest {
@@ -260,6 +272,49 @@ class TelegramSource private constructor(private val context: Context) {
             postId += 1
             request(TdApi.GetMessageLinkInfo("$postPrefix/$postId")).message
         } ?: error("No video was found in this Telegram album. Open it in Telegram to check the post.")
+    }
+
+    private suspend fun cleanupExpiredMovies() {
+        cacheLock.lock()
+        try {
+            val now = System.currentTimeMillis()
+            for ((key, value) in retention.all) {
+                val id = key.toIntOrNull() ?: continue
+                val lastPlayed = value as? Long ?: continue
+                if (!MovieRetention.expired(lastPlayed, now, id == activeFileId)) continue
+                request(TdApi.DeleteFile(id))
+                retention.edit().remove(key).apply()
+            }
+        } finally { cacheLock.unlock() }
+    }
+
+    suspend fun protectMovie(media: TelegramMedia) {
+        cacheLock.lock()
+        try {
+            activeFileId = media.file.id
+            // Existing downloads begin their retention period when first used after upgrade.
+            val key = media.file.id.toString()
+            if (!retention.contains(key)) retention.edit().putLong(key, System.currentTimeMillis()).apply()
+        } finally { cacheLock.unlock() }
+    }
+
+    fun recordMoviePlayback() {
+        activeFileId?.let {
+            val key = it.toString()
+            val now = System.currentTimeMillis()
+            if (now - retention.getLong(key, 0) >= 60_000)
+                retention.edit().putLong(key, now).apply()
+        }
+    }
+
+    suspend fun releaseMovie(played: Boolean) {
+        cacheLock.lock()
+        try {
+            activeFileId?.let {
+                if (played) retention.edit().putLong(it.toString(), System.currentTimeMillis()).apply()
+            }
+            activeFileId = null
+        } finally { cacheLock.unlock() }
     }
 
     suspend fun prepare(media: TelegramMedia): TelegramMedia {

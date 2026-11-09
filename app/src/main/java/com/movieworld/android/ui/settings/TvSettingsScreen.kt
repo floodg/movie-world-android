@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.movieworld.android.safeSetupError
+import com.movieworld.android.PcPlayback
 import com.movieworld.android.Playback
 import com.movieworld.android.Renderer
 import com.movieworld.android.TelegramSource
@@ -89,6 +90,8 @@ fun TvSettingsScreen(onBack: () -> Unit) {
     val playback by Playback.state.collectAsStateWithLifecycle()
     val prefs = remember { context.getSharedPreferences("tv", Context.MODE_PRIVATE) }
     var address by rememberSaveable { mutableStateOf(prefs.getString("description", "").orEmpty()) }
+    var pcAddress by rememberSaveable { mutableStateOf(prefs.getString("pc-server", "").orEmpty()) }
+    var pcSaved by remember { mutableStateOf(prefs.getString("pc-server", "").orEmpty()) }
     var apiId by rememberSaveable { mutableStateOf("") }
     // Credentials and sign-in challenges deliberately stay out of saved instance state.
     var apiHash by remember { mutableStateOf("") }
@@ -142,7 +145,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                     connected = saved != null,
                     status = saved?.let { "Selected · $it" } ?: "Not set up",
                 ) {
-                    Text("Connect this phone and the TV to the same Wi-Fi. The phone hosts the video while you watch.",
+                    Text("Connect this phone and the TV to the same Wi-Fi. The phone hosts the video unless your home PC already has a cached copy.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(Dimens.lg))
                     PrimaryButton("Find TVs", icon = Icons.Filled.Search, enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
@@ -165,6 +168,32 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                             save(tv)
                         }
                     })
+                }
+            }
+            item(key = "pc") {
+                SettingsCard(title = "Home PC", icon = AppIcons.Tv,
+                    connected = pcSaved.isNotBlank(), status = if (pcSaved.isBlank()) "Optional" else pcSaved) {
+                    Text("Before downloading, check your PC for a saved copy. If found, the PC streams to the TV and saves your progress. Otherwise, this phone downloads and streams as usual.")
+                    Spacer(Modifier.height(Dimens.md))
+                    OutlinedTextField(pcAddress, { pcAddress = it }, Modifier.fillMaxWidth(),
+                        label = { Text("PC server address") }, placeholder = { Text("http://192.168.1.10") },
+                        singleLine = true)
+                    Spacer(Modifier.height(Dimens.sm))
+                    SecondaryButton("Check and save PC", enabled = !busy && !playback.active && pcAddress.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(), onClick = {
+                            runWork {
+                                val value = pcAddress.trim().trimEnd('/')
+                                withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), value).check() }
+                                prefs.edit { putString("pc-server", value) }
+                                pcAddress = value
+                                pcSaved = value
+                            }
+                        })
+                    if (pcSaved.isNotBlank()) TextButton(enabled = !busy && !playback.active, onClick = {
+                        prefs.edit { remove("pc-server") }
+                        pcSaved = ""
+                        pcAddress = ""
+                    }) { Text("Use phone only") }
                 }
             }
             item(key = "account") {

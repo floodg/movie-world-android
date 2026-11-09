@@ -45,6 +45,27 @@ object Playback {
         androidx.core.content.ContextCompat.startForegroundService(context, intent)
     }
 
+    /** Called while the app is visible; never starts, replaces or downloads a movie. */
+    suspend fun observePc(context: Context) {
+        if (state.value.active) return
+        val prefs = context.getSharedPreferences("tv", Context.MODE_PRIVATE)
+        val address = prefs.getString("pc-server", "").orEmpty()
+        val selected = prefs.getString("renderer-id", "").orEmpty()
+        if (address.isBlank() || selected.isBlank()) return
+        val session = try {
+            withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), address).activeSession() }
+        } catch (error: CancellationException) { throw error }
+        catch (_: Exception) { return }
+        if (session == null || !session.canJoin(selected) || state.value.active) return
+        androidx.core.content.ContextCompat.startForegroundService(context,
+            Intent(context, PlaybackService::class.java).apply {
+                action = "attach-pc"
+                putExtra("job", session.id)
+                putExtra("movie", session.movieId)
+                putExtra("title", session.title)
+            })
+    }
+
     fun control(context: Context, command: String, seconds: Long = 0) {
         if (!state.value.active) return
         context.startService(Intent(context, PlaybackService::class.java).apply {
@@ -61,6 +82,7 @@ class PlaybackService : Service() {
     private var mediaServer: MediaServer? = null
     private var network: TvNetwork? = null
     private var renderer: Renderer? = null
+    private var pcPlayback: PcPlayback? = null
     private var wake: PowerManager.WakeLock? = null
     private var source: TelegramSource? = null
     private var currentId = ""
@@ -78,17 +100,21 @@ class PlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            "start" -> {
+            "start", "attach-pc" -> {
                 if (playback?.isActive == true) return START_NOT_STICKY
                 currentId = intent.getStringExtra("movie") ?: return START_NOT_STICKY
                 restart = intent.getBooleanExtra("restart", false)
                 stopped = false
                 ownsTransport = false
+                pcPlayback = null
+                source = null
                 Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing TV playback…")
-                foreground(true)
+                foreground(intent.action != "attach-pc")
                 playback = scope.launch {
                     try {
-                        withTimeout(6 * 60 * 60 * 1000L) { cast(intent) }
+                        withTimeout(6 * 60 * 60 * 1000L) {
+                            if (intent.action == "attach-pc") attachPc(intent) else cast(intent)
+                        }
                     } catch (error: TimeoutCancellationException) {
                         update("Playback session timed out. Open Movie World to retry.")
                     } catch (error: CancellationException) {
@@ -99,6 +125,10 @@ class PlaybackService : Service() {
                         withContext(NonCancellable) {
                             commands.withLock {
                                 try { if (ownsTransport) renderer?.let { network?.action(it, "Stop") } } catch (_: Exception) { }
+                                if (stopped) {
+                                    try { pcPlayback?.control("stop") } catch (_: Exception) { }
+                                }
+                                pcPlayback = null
                                 mediaServer?.close()
                                 mediaServer = null
                                 renderer = null
@@ -118,6 +148,16 @@ class PlaybackService : Service() {
             }
             "pause", "resume", "seek" -> scope.launch {
                 commands.withLock {
+                    pcPlayback?.let { pc ->
+                        try {
+                            pc.control(intent.action!!, intent.getLongExtra("seconds", 0).coerceAtLeast(0))
+                            Playback.mutableState.value = pc.session(pc.status()).castState(Playback.state.value).copy(warning = null)
+                        }
+                        catch (error: Exception) {
+                            Playback.mutableState.value = Playback.state.value.copy(warning = error.message ?: "PC control failed.")
+                        }
+                        return@withLock
+                    }
                     val tv = renderer ?: return@withLock
                     val net = network ?: return@withLock
                     try {
@@ -181,7 +221,27 @@ class PlaybackService : Service() {
         val saved = if (!restart && previous != null &&
             (previous.duration == 0L || previous.position < previous.duration - 30)) previous.position else 0L
         val local = intent.getStringExtra("local")
+        if (local == null) {
+            val pcAddress = prefs.getString("pc-server", "").orEmpty()
+            if (pcAddress.isNotBlank()) {
+                update("Checking PC for a saved movie…")
+                val pc = try {
+                    PcPlayback(net, pcAddress).takeIf { it.cached(currentId, tv.id) }
+                } catch (error: CancellationException) { throw error }
+                catch (_: Exception) { null }
+                currentCoroutineContext().ensureActive()
+                if (pc != null) {
+                    val job = pc.start(currentId, tv.id, restart, previous)
+                    if (job != null) {
+                        pcPlayback = pc
+                        monitorPc(pc, job)
+                        return
+                    }
+                }
+            }
+        }
         var temporary: File? = null
+        var played = false
         try {
             val media: Pair<File, String> = if (local != null) {
                 update("Preparing selected video…")
@@ -210,7 +270,9 @@ class PlaybackService : Service() {
             } else {
                 val telegram = TelegramSource.get(this).also { source = it; it.start() }
                 update("Finding movie in Telegram…")
-                val movie = telegram.prepare(telegram.resolve(intent.getStringExtra("telegram") ?: error("Telegram link unavailable")))
+                val resolved = telegram.resolve(intent.getStringExtra("telegram") ?: error("Telegram link unavailable"))
+                telegram.protectMovie(resolved)
+                val movie = telegram.prepare(resolved)
 
                 update("Downloading movie to phone…")
                 foreground(true)
@@ -249,6 +311,8 @@ class PlaybackService : Service() {
                 }
                 failures = 0
                 if (position.state == "PLAYING" || position.state == "PAUSED_PLAYBACK") {
+                    source?.recordMoviePlayback()
+                    played = true
                     confirmed = true
                     stopping = 0
                     if (pendingResume > 0) {
@@ -295,7 +359,62 @@ class PlaybackService : Service() {
                 }
                 delay(2_000)
             }
-        } finally { temporary?.delete() }
+        } finally {
+            temporary?.delete()
+            withContext(NonCancellable) { source?.releaseMovie(played) }
+        }
+    }
+
+    private suspend fun attachPc(intent: Intent) {
+        val prefs = getSharedPreferences("tv", MODE_PRIVATE)
+        val pc = PcPlayback(TvNetwork(this), prefs.getString("pc-server", "").orEmpty())
+        val job = pc.attach(intent.getStringExtra("job").orEmpty(),
+            prefs.getString("renderer-id", "").orEmpty())
+        if (job == null) { update("Playback ended"); return }
+        pcPlayback = pc
+        monitorPc(pc, job)
+    }
+
+    private suspend fun monitorPc(pc: PcPlayback, initial: org.json.JSONObject) {
+        foreground(false)
+        var job = initial
+        var failures = 0
+        val db = PlaybackDatabase.get(this).access()
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val session = pc.session(job)
+            val shared = session.castState(Playback.state.value).copy(warning = null)
+            Playback.mutableState.value = shared
+            val seconds = session.position
+            // Keep final progress too, including completion reported by another remote.
+            if (seconds != null && seconds >= 0 && (shared.controllable || !session.active)) {
+                db.save(PlaybackDatabase.Progress().apply {
+                    movieId = currentId
+                    position = seconds
+                    duration = shared.duration
+                    updated = maxOf(System.currentTimeMillis(), (db.find(currentId)?.updated ?: 0) + 1)
+                    finished = session.state == "ended" || (duration > 0 && seconds >= duration - 30)
+                    dirty = true
+                })
+                Playback.revision.value += 1
+                SyncHooks.schedule(if (shared.playing) 1500 else 0)
+            }
+            if (!session.active) return
+            foreground(false)
+            // A failed read never replaces the last known position or writes stale progress.
+            do {
+                delay(2000)
+                try {
+                    job = commands.withLock { pc.status() }
+                    failures = 0
+                } catch (error: CancellationException) { throw error }
+                catch (error: Exception) {
+                    Playback.mutableState.value = Playback.state.value.copy(controllable = false,
+                        warning = "Reconnecting to PC…")
+                    if (++failures >= 3) error("Lost contact with the PC. It may still be playing on the TV.")
+                }
+            } while (failures > 0)
+        }
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {

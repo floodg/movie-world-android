@@ -65,3 +65,5 @@ Build, unit tests, lint, and the native-library/Room device tests have passed. A
 The debug APK is app/build/outputs/apk/debug/app-debug.apk. Gradle installs the main debug app during connected-device tests. Test progress uses an isolated in-memory database.
 
 TDLib is supplied by io.github.tdlib-android:core:0.1.1 from Maven Central, a community prebuilt package of Telegram TDLib. Native loading is checked on-device. Upstream documentation is at https://core.telegram.org/tdlib/docs/ and package setup is at https://tdlib-android.vercel.app/setup.
+
+Downloaded Telegram movies expire seven days after their last playback session ends. Cleanup runs when Telegram starts and hourly while the app process remains alive; expired movies are removed the next time the app runs if it was closed. Active playback is protected. The 8 GB quota may remove files sooner. Existing downloads start being tracked when first used after this upgrade.

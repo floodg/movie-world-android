@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -65,6 +66,8 @@ import com.movieworld.android.ui.settings.TvSettingsScreen
 import com.movieworld.android.ui.theme.Surface1
 import com.movieworld.android.ui.theme.Surface2
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -109,6 +112,14 @@ fun MovieWorldApp(graph: AppGraph) {
         poster = cast.movieId?.let { id -> withContext(Dispatchers.IO) { catalogueResult { graph.catalogue.movie(id)?.poster } } }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, context) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                Playback.observePc(context)
+                delay(3000)
+            }
+        }
+    }
     DisposableEffect(lifecycleOwner, graph) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_START) graph.cloud.reconcileNow()
