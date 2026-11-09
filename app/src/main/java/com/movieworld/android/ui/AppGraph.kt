@@ -20,7 +20,7 @@ val LocalAppGraph = staticCompositionLocalOf<AppGraph> { error("AppGraph not pro
 
 /** Saved position counts as resumable unless it is within 30 s of a known end. */
 fun resumePosition(progress: PlaybackDatabase.Progress?): Long =
-    if (progress != null && (progress.duration == 0L || progress.position < progress.duration - 30))
+    if (progress != null && !progress.finished && (progress.duration == 0L || progress.position < progress.duration - 30))
         progress.position else 0L
 
 /** Fraction watched for progress bars, or null when the duration is unknown. */

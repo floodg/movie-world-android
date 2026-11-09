@@ -36,7 +36,7 @@ data class SearchUiState(
     val filterCount: Int get() = listOfNotNull(yearFrom, yearTo).size.coerceAtMost(1)
 }
 
-class SearchViewModel(private val graph: AppGraph) : ViewModel() {
+class SearchViewModel(private val graph: AppGraph, initialActor: String? = null) : ViewModel() {
     private val mutableState = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = mutableState.asStateFlow()
     private var search: Job? = null
@@ -47,7 +47,17 @@ class SearchViewModel(private val graph: AppGraph) : ViewModel() {
             val bounds = withContext(Dispatchers.IO) { catalogueResult { graph.catalogue.yearRange() } }
             mutableState.update { it.copy(genres = genres, yearBounds = bounds ?: it.yearBounds) }
         }
-        runSearch(debounce = false)
+        if (initialActor == null) {
+            runSearch(debounce = false)
+        } else {
+            mutableState.update { it.copy(query = initialActor, byActor = true) }
+            search = viewModelScope.launch {
+                val actor = withContext(Dispatchers.IO) {
+                    catalogueResult { graph.catalogue.actors(initialActor).firstOrNull { it.name == initialActor } }
+                }
+                if (actor != null) selectActor(actor) else setQuery(initialActor)
+            }
+        }
     }
 
     fun setQuery(value: String) = change(debounce = value.isNotBlank()) {

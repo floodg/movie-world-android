@@ -74,6 +74,8 @@ import kotlinx.coroutines.withContext
 object Routes {
     const val HOME = "home"
     const val SEARCH = "search"
+    const val SEARCH_ROUTE = "search?actor={actor}"
+    fun actor(name: String) = "search?actor=${android.net.Uri.encode(name)}"
     const val LIST = "list"
     const val HISTORY = "history"
     const val MOVIE = "movie/{id}"
@@ -99,7 +101,7 @@ fun MovieWorldApp(graph: AppGraph) {
     val scope = rememberCoroutineScope()
     val messages = remember<(String) -> Unit> { { text -> scope.launch { snackbar.showSnackbar(text) } } }
     val entry by navController.currentBackStackEntryAsState()
-    val route = entry?.destination?.route
+    val route = entry?.destination?.route?.let { if (it == Routes.SEARCH_ROUTE) Routes.SEARCH else it }
     val showTabs = route in tabs.map { it.route }
     val cast by Playback.state.collectAsStateWithLifecycle()
     val phase = cast.phase()
@@ -163,12 +165,20 @@ fun MovieWorldApp(graph: AppGraph) {
                     HomeScreen(onOpen = { navController.navigate(Routes.movie(it)) },
                         onSettings = { navController.navigate(Routes.SETTINGS) }, contentPadding = padding)
                 }
-                composable(Routes.SEARCH) { SearchScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
+                composable(Routes.SEARCH_ROUTE, arguments = listOf(androidx.navigation.navArgument("actor") {
+                    type = androidx.navigation.NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                })) { backStack ->
+                    SearchScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding,
+                        initialActor = backStack.arguments?.getString("actor"))
+                }
                 composable(Routes.LIST) { MyListScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
                 composable(Routes.HISTORY) { HistoryScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
                 composable(Routes.MOVIE) { backStack ->
                     val id = backStack.arguments?.getString("id").orEmpty()
                     DetailScreen(id, onBack = { navController.popBackStack() },
+                        onActor = { navController.navigate(Routes.actor(it)) },
                         onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding)
                 }
                 composable(Routes.SETTINGS) { TvSettingsScreen(onBack = { navController.popBackStack() }) }
@@ -196,7 +206,9 @@ private fun BottomTabs(navController: NavHostController, route: String?) {
                     navController.navigate(tab.route) {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                         launchSingleTop = true
-                        restoreState = true
+                        // Home must land on the start destination. Restoring its saved
+                        // stack can reopen a movie or actor search above Home.
+                        restoreState = tab.route != Routes.HOME
                     }
                 },
                 icon = { Icon(tab.icon, contentDescription = null) },

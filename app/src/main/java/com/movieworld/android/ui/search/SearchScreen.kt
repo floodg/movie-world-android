@@ -73,9 +73,9 @@ import com.movieworld.android.ui.theme.Dimens
 import com.movieworld.android.ui.theme.PillShape
 
 @Composable
-fun SearchScreen(onOpen: (String) -> Unit, contentPadding: PaddingValues) {
+fun SearchScreen(onOpen: (String) -> Unit, contentPadding: PaddingValues, initialActor: String? = null) {
     val graph = LocalAppGraph.current
-    val viewModel: SearchViewModel = viewModel { SearchViewModel(graph) }
+    val viewModel: SearchViewModel = viewModel { SearchViewModel(graph, initialActor) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     SearchContent(
         state = state,
