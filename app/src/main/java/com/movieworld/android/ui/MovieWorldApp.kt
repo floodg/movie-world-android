@@ -27,6 +27,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -49,6 +54,7 @@ import androidx.navigation.compose.rememberNavController
 import com.movieworld.android.Playback
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.detail.DetailScreen
+import com.movieworld.android.ui.history.HistoryScreen
 import com.movieworld.android.ui.home.HomeScreen
 import com.movieworld.android.ui.list.MyListScreen
 import com.movieworld.android.ui.player.MiniPlayer
@@ -60,13 +66,18 @@ import com.movieworld.android.ui.settings.TvSettingsScreen
 import com.movieworld.android.ui.theme.Surface1
 import com.movieworld.android.ui.theme.Surface2
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 object Routes {
     const val HOME = "home"
     const val SEARCH = "search"
+    const val SEARCH_ROUTE = "search?actor={actor}"
+    fun actor(name: String) = "search?actor=${android.net.Uri.encode(name)}"
     const val LIST = "list"
+    const val HISTORY = "history"
     const val MOVIE = "movie/{id}"
     const val SETTINGS = "settings"
     fun movie(id: String) = "movie/$id"
@@ -80,6 +91,7 @@ private val tabs = listOf(
     Tab(Routes.HOME, "Home", Icons.Filled.Home),
     Tab(Routes.SEARCH, "Search", Icons.Filled.Search),
     Tab(Routes.LIST, "My List", AppIcons.Bookmark),
+    Tab(Routes.HISTORY, "History", AppIcons.History),
 )
 
 @Composable
@@ -89,7 +101,7 @@ fun MovieWorldApp(graph: AppGraph) {
     val scope = rememberCoroutineScope()
     val messages = remember<(String) -> Unit> { { text -> scope.launch { snackbar.showSnackbar(text) } } }
     val entry by navController.currentBackStackEntryAsState()
-    val route = entry?.destination?.route
+    val route = entry?.destination?.route?.let { if (it == Routes.SEARCH_ROUTE) Routes.SEARCH else it }
     val showTabs = route in tabs.map { it.route }
     val cast by Playback.state.collectAsStateWithLifecycle()
     val phase = cast.phase()
@@ -100,6 +112,22 @@ fun MovieWorldApp(graph: AppGraph) {
     var poster by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(cast.movieId) {
         poster = cast.movieId?.let { id -> withContext(Dispatchers.IO) { catalogueResult { graph.catalogue.movie(id)?.poster } } }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, context) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                Playback.observePc(context)
+                delay(3000)
+            }
+        }
+    }
+    DisposableEffect(lifecycleOwner, graph) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) graph.cloud.reconcileNow()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     CompositionLocalProvider(LocalAppGraph provides graph, LocalMessages provides messages) {
@@ -137,11 +165,20 @@ fun MovieWorldApp(graph: AppGraph) {
                     HomeScreen(onOpen = { navController.navigate(Routes.movie(it)) },
                         onSettings = { navController.navigate(Routes.SETTINGS) }, contentPadding = padding)
                 }
-                composable(Routes.SEARCH) { SearchScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
+                composable(Routes.SEARCH_ROUTE, arguments = listOf(androidx.navigation.navArgument("actor") {
+                    type = androidx.navigation.NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                })) { backStack ->
+                    SearchScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding,
+                        initialActor = backStack.arguments?.getString("actor"))
+                }
                 composable(Routes.LIST) { MyListScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
+                composable(Routes.HISTORY) { HistoryScreen(onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding) }
                 composable(Routes.MOVIE) { backStack ->
                     val id = backStack.arguments?.getString("id").orEmpty()
                     DetailScreen(id, onBack = { navController.popBackStack() },
+                        onActor = { navController.navigate(Routes.actor(it)) },
                         onOpen = { navController.navigate(Routes.movie(it)) }, contentPadding = padding)
                 }
                 composable(Routes.SETTINGS) { TvSettingsScreen(onBack = { navController.popBackStack() }) }
@@ -169,7 +206,9 @@ private fun BottomTabs(navController: NavHostController, route: String?) {
                     navController.navigate(tab.route) {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                         launchSingleTop = true
-                        restoreState = true
+                        // Home must land on the start destination. Restoring its saved
+                        // stack can reopen a movie or actor search above Home.
+                        restoreState = tab.route != Routes.HOME
                     }
                 },
                 icon = { Icon(tab.icon, contentDescription = null) },

@@ -5,6 +5,8 @@ import android.database.sqlite.SQLiteDatabase
 import java.io.File
 import java.io.IOException
 
+data class Actor(val id: String, val name: String, val movieCount: Int)
+
 data class Genre(val id: String, val name: String)
 data class Movie(val id: String, val title: String, val year: String?, val rating: String?, val poster: String?)
 data class MovieDetails(
@@ -49,12 +51,15 @@ class Catalogue(private val context: Context) {
         ).use { rows -> buildList { while (rows.moveToNext()) add(Genre(rows.getString(0), rows.getString(1))) } }
     }
 
-    fun movies(query: String, byActor: Boolean, genre: String?, from: Int?, to: Int?): List<Movie> = read { db ->
+    fun movies(query: String, byActor: Boolean, genre: String?, from: Int?, to: Int?, actorId: String? = null): List<Movie> = read { db ->
         val filters = mutableListOf(visible)
         val args = mutableListOf<String>()
         val term = query.trim().replace(Regex("\\s+"), " ").take(80)
         val escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        if (term.isNotEmpty()) {
+        if (byActor && actorId != null) {
+            filters += "EXISTS (SELECT 1 FROM movie_actors ma WHERE ma.movie_id = m.id AND ma.actor_id = ?)"
+            args += actorId
+        } else if (term.isNotEmpty()) {
             filters += if (byActor) """EXISTS (
                 SELECT 1 FROM movie_actors ma JOIN actors a ON a.id = ma.actor_id
                 WHERE ma.movie_id = m.id AND a.name LIKE ? ESCAPE '\'
@@ -87,6 +92,26 @@ class Catalogue(private val context: Context) {
                     add(Movie(rows.getString(0), rows.getString(1), rows.getString(2), rows.getString(3), rows.getString(4)))
                 }
             }
+        }
+    }
+
+    /** Same actor picker as the web app: two letters, prefix first, then visible movie count. */
+    fun actors(query: String): List<Actor> {
+        val term = query.trim().replace(Regex("\\s+"), " ").take(80)
+        if (term.length < 2) return emptyList()
+        val escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return read { db ->
+            db.rawQuery(
+                """SELECT a.id, a.name, COUNT(DISTINCT m.id) AS movie_count
+                   FROM actors a JOIN movie_actors ma ON ma.actor_id = a.id
+                   JOIN movies m ON m.id = ma.movie_id
+                   WHERE a.name LIKE ? ESCAPE '\' AND $visible
+                   GROUP BY a.id ORDER BY CASE WHEN a.name LIKE ? ESCAPE '\' THEN 0 ELSE 1 END,
+                   movie_count DESC, a.name COLLATE NOCASE LIMIT 12""",
+                arrayOf("%$escaped%", "$escaped%")
+            ).use { rows -> buildList {
+                while (rows.moveToNext()) add(Actor(rows.getString(0), rows.getString(1), rows.getInt(2)))
+            } }
         }
     }
 

@@ -5,7 +5,7 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
 ## Features
 
 - Browse the catalogue offline by genre, IMDb rating, title, actor, and release year.
-- View movie details and cast, and save favourites on the phone.
+- View movie details and cast, and save favourites on the phone (My List), with automatic personal-data sync through Telegram Saved Messages.
 - Open the original movie post in Telegram over Wi-Fi or mobile data.
 - Download a movie through Telegram and stream it from the phone to a compatible TV.
 - Resume TV playback through Continue Watching, with pause, stop, and start-over controls.
@@ -17,7 +17,17 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
 3. Select a physical Android phone running Android 8.0 or later and run the app configuration.
 4. For terminal builds on Windows, set JAVA_HOME to a suitable JDK, then run the commands below.
 
-The catalogue is included at app/src/main/assets/movie-world.sqlite. The app reads an on-device copy and keeps watch progress in a separate Room database. Posters and backdrops are fetched with Coil and cached on disk; without internet they fall back to a placeholder tile.
+The catalogue is included at app/src/main/assets/movie-world.sqlite. The app reads an on-device copy and keeps favourites and watch progress in a separate Room database. Posters and backdrops are fetched with Coil and cached on disk; without internet they fall back to a placeholder tile.
+
+## Personal data sync
+
+Connect Telegram in TV settings. My List, resume positions, completion status and watch history remain in Room/SQLite locally and sync as labelled JSON files in Saved Messages. Android works with the PC off. Devices using the same Telegram account merge changes, including removals and playback resets. The catalogue, credentials, sessions, downloads and TV settings are excluded.
+
+Sync runs on launch, foreground return, network recovery and local changes. Retries run every minute while the process is alive. Playback uploads are throttled to once a minute and flushed on pause/stop. Android can suspend or terminate the process; reopen the app or use **Sync now** to catch up. Settings show pending changes, errors and the last successful sync. The latest two confirmed snapshots per device are retained; older copies are removed only when their records are covered by those retained backups. Both hyphenated and Telegram-normalized underscore filenames are supported. Cleanup failures appear in sync status and retry on later syncs. These are ordinary Telegram cloud files, without a separate encryption password. Avoid editing attachments by hand: damaged or unsupported sync files report an error and keep local data intact.
+
+The Android app has no Supabase sign-in, migration form, or Supabase SDK dependency. Migration is handled externally by publishing a compatible Movie World snapshot to the same Telegram account's Saved Messages. The phone restores it through normal Telegram sync; no password or file import is required on the phone. Existing records merge individually, preserving newer local edits. Supabase source data remains untouched.
+
+The unchanged PC/browser app continues using Supabase and will not receive new Android changes in this phase. Signing out of Telegram keeps local data; switching accounts archives and restores each account's personal data separately. Stop playback before switching. Existing unassigned local data belongs to the first Telegram account connected.
 
 The interface is a dark, poster-led layout: a Home screen with a featured title and rows (Continue Watching, My List, Top Rated, popular genres), a Search tab with title/actor search, genre chips and a year-range filter sheet, a My List tab, a full-bleed movie detail screen, and a persistent "now playing on TV" bar that expands into playback controls. TV settings open from the cast icon on Home. See docs/ui-redesign-plan.md.
 
@@ -55,3 +65,5 @@ Build, unit tests, lint, and the native-library/Room device tests have passed. A
 The debug APK is app/build/outputs/apk/debug/app-debug.apk. Gradle installs the main debug app during connected-device tests. Test progress uses an isolated in-memory database.
 
 TDLib is supplied by io.github.tdlib-android:core:0.1.1 from Maven Central, a community prebuilt package of Telegram TDLib. Native loading is checked on-device. Upstream documentation is at https://core.telegram.org/tdlib/docs/ and package setup is at https://tdlib-android.vercel.app/setup.
+
+Downloaded Telegram movies expire seven days after their last playback session ends. Cleanup runs when Telegram starts and hourly while the app process remains alive; expired movies are removed the next time the app runs if it was closed. Active playback is protected. The 8 GB quota may remove files sooner. Existing downloads start being tracked when first used after this upgrade.

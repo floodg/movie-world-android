@@ -78,7 +78,7 @@ import com.movieworld.android.ui.theme.ScrimStrong
 import com.movieworld.android.ui.theme.ScrimTransparent
 
 @Composable
-fun DetailScreen(movieId: String, onBack: () -> Unit, onOpen: (String) -> Unit, contentPadding: PaddingValues) {
+fun DetailScreen(movieId: String, onBack: () -> Unit, onOpen: (String) -> Unit, contentPadding: PaddingValues, onActor: (String) -> Unit = {}) {
     val graph = LocalAppGraph.current
     val viewModel: DetailViewModel = viewModel(key = "detail-$movieId") { DetailViewModel(graph, movieId) }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -105,7 +105,9 @@ fun DetailScreen(movieId: String, onBack: () -> Unit, onOpen: (String) -> Unit, 
         error = error,
         onBack = onBack,
         onOpen = onOpen,
+        onActor = onActor,
         onToggleFavourite = viewModel::toggleFavourite,
+        onMarkWatched = { viewModel.markWatched() },
         onPlay = { restart ->
             val movie = state.movie ?: return@DetailContent
             try {
@@ -133,6 +135,8 @@ fun DetailContent(
     onPlayLocal: (restart: Boolean) -> Unit,
     onOpenTelegram: (String) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
+    onActor: (String) -> Unit = {},
+    onMarkWatched: () -> Unit = {},
 ) {
     val movie = state.movie
     val details = state.details
@@ -201,6 +205,11 @@ fun DetailContent(
                             if (inList) "In My List" else "My List", onClick = onToggleFavourite,
                             icon = if (inList) Icons.Filled.Check else Icons.Filled.Add,
                         )
+                        SecondaryButton(
+                            if (state.finished) "Watched" else "Mark watched",
+                            onClick = onMarkWatched, icon = Icons.Filled.Check,
+                            enabled = !state.finished && !ownSession,
+                        )
                         if (link != null) SecondaryButton("Telegram", onClick = { onOpenTelegram(link) }, icon = AppIcons.OpenInNew)
                         SecondaryButton(
                             "Downloaded video", icon = AppIcons.VideoFile, enabled = canStart,
@@ -230,7 +239,8 @@ fun DetailContent(
                             items(details.cast) { name ->
                                 Text(
                                     name, style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
+                                    modifier = Modifier.clip(CircleShape).clickable(onClickLabel = "Show movies with $name") { onActor(name) }
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
                                         .padding(horizontal = Dimens.md, vertical = Dimens.sm),
                                 )
                             }

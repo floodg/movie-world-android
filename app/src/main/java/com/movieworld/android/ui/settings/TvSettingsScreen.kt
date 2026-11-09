@@ -61,10 +61,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.movieworld.android.safeSetupError
+import com.movieworld.android.PcPlayback
 import com.movieworld.android.Playback
 import com.movieworld.android.Renderer
 import com.movieworld.android.TelegramSource
 import com.movieworld.android.TvNetwork
+import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.components.PrimaryButton
 import com.movieworld.android.ui.components.SecondaryButton
@@ -80,11 +83,15 @@ import kotlinx.coroutines.withContext
 fun TvSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val cloud = LocalAppGraph.current.cloud
+    val account by cloud.account.collectAsStateWithLifecycle()
     val source = remember { TelegramSource.get(context) }
     val telegram by source.state.collectAsStateWithLifecycle()
     val playback by Playback.state.collectAsStateWithLifecycle()
     val prefs = remember { context.getSharedPreferences("tv", Context.MODE_PRIVATE) }
     var address by rememberSaveable { mutableStateOf(prefs.getString("description", "").orEmpty()) }
+    var pcAddress by rememberSaveable { mutableStateOf(prefs.getString("pc-server", "").orEmpty()) }
+    var pcSaved by remember { mutableStateOf(prefs.getString("pc-server", "").orEmpty()) }
     var apiId by rememberSaveable { mutableStateOf("") }
     // Credentials and sign-in challenges deliberately stay out of saved instance state.
     var apiHash by remember { mutableStateOf("") }
@@ -105,7 +112,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
         scope.launch {
             try { block() }
             catch (failure: CancellationException) { throw failure }
-            catch (failure: Exception) { error = failure.message ?: "Setup failed" }
+            catch (failure: Exception) { error = safeSetupError(failure) }
             finally { busy = false }
         }
     }
@@ -138,7 +145,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                     connected = saved != null,
                     status = saved?.let { "Selected Â· $it" } ?: "Not set up",
                 ) {
-                    Text("Connect this phone and the TV to the same Wi-Fi. The phone hosts the video while you watch.",
+                    Text("Connect this phone and the TV to the same Wi-Fi. The phone hosts the video unless your home PC already has a cached copy.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(Dimens.lg))
                     PrimaryButton("Find TVs", icon = Icons.Filled.Search, enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
@@ -163,6 +170,45 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                     })
                 }
             }
+            item(key = "pc") {
+                SettingsCard(title = "Home PC", icon = AppIcons.Tv,
+                    connected = pcSaved.isNotBlank(), status = if (pcSaved.isBlank()) "Optional" else pcSaved) {
+                    Text("Before downloading, check your PC for a saved copy. If found, the PC streams to the TV and saves your progress. Otherwise, this phone downloads and streams as usual.")
+                    Spacer(Modifier.height(Dimens.md))
+                    OutlinedTextField(pcAddress, { pcAddress = it }, Modifier.fillMaxWidth(),
+                        label = { Text("PC server address") }, placeholder = { Text("http://192.168.1.10") },
+                        singleLine = true)
+                    Spacer(Modifier.height(Dimens.sm))
+                    SecondaryButton("Check and save PC", enabled = !busy && !playback.active && pcAddress.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(), onClick = {
+                            runWork {
+                                val value = pcAddress.trim().trimEnd('/')
+                                withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), value).check() }
+                                prefs.edit { putString("pc-server", value) }
+                                pcAddress = value
+                                pcSaved = value
+                            }
+                        })
+                    if (pcSaved.isNotBlank()) TextButton(enabled = !busy && !playback.active, onClick = {
+                        prefs.edit { remove("pc-server") }
+                        pcSaved = ""
+                        pcAddress = ""
+                    }) { Text("Use phone only") }
+                }
+            }
+            item(key = "account") {
+                SettingsCard(title = "Personal data sync", icon = AppIcons.Bookmark,
+                    connected = account.signedIn, status = account.status) {
+                    Text("Favourites, resume points and watch history sync through JSON files in your Telegram Saved Messages. Connect Telegram below. Your PC/browser still uses Supabase and does not receive these changes.")
+                    Text("Files use ordinary Telegram cloud storage. Credentials, downloads and TV settings are excluded.", style = MaterialTheme.typography.bodySmall)
+                    if (account.lastSync > 0) Text("Last sync: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(account.lastSync))}")
+                    if (account.pending) Text("Changes pending sync")
+                    SecondaryButton("Sync now", enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { cloud.reconcileNow() })
+                    Spacer(Modifier.height(Dimens.lg))
+                    SecondaryButton("Sign out of Telegram", enabled = !busy && account.signedIn && !playback.active,
+                        modifier = Modifier.fillMaxWidth(), onClick = { runWork { source.signOutAccount() } })
+                }
+            }
             item(key = "telegram") {
                 SettingsCard(
                     title = "Telegram",
@@ -170,7 +216,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                     connected = telegram.step == "ready",
                     status = when (telegram.step) {
                         "ready" -> "Connected"
-                        "joining" -> "Joining movie channel…"
+                        "joining" -> "Joining movie channelâ€¦"
                         "channel_pending" -> "Waiting for channel approval"
                         "channel_error" -> "Channel setup incomplete"
                         "setup" -> "Not set up"
@@ -223,7 +269,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                         "joining" -> {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                             Spacer(Modifier.height(Dimens.sm))
-                            Text("Joining the movie channel…", style = MaterialTheme.typography.bodyMedium)
+                            Text("Joining the movie channelâ€¦", style = MaterialTheme.typography.bodyMedium)
                         }
                         "channel_error", "channel_pending" -> SecondaryButton(
                             "Retry channel connection", enabled = !busy, modifier = Modifier.fillMaxWidth(),

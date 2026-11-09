@@ -77,7 +77,10 @@ class HomeViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { home ->
             val featuredId = home.featured?.movie?.id
             val resume = continuing?.firstOrNull { it.movie.id == featuredId }?.progress?.position ?: 0L
-            home.copy(continuing = continuing.orEmpty(), featuredResume = resume)
+            home.copy(
+                continuing = continuing.orEmpty(),
+                featuredResume = resume,
+            )
         }
     }
 

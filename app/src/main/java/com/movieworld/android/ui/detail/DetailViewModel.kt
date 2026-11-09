@@ -25,6 +25,7 @@ data class DetailUiState(
     val loading: Boolean = true,
     val resume: Long = 0,
     val watched: Float? = null,
+    val finished: Boolean = false,
     /** Null while loading. */
     val similar: List<Movie>? = null,
 )
@@ -46,10 +47,22 @@ class DetailViewModel(private val graph: AppGraph, val movieId: String) : ViewMo
             Playback.revision.collectLatest {
                 val progress: PlaybackDatabase.Progress? = withContext(Dispatchers.IO) { catalogueResult { graph.progress.find(movieId) } }
                 mutableState.update {
-                    it.copy(resume = resumePosition(progress), watched = progress?.let(::watchedFraction))
+                    it.copy(resume = resumePosition(progress), watched = progress?.let(::watchedFraction), finished = progress?.finished == true)
                 }
             }
         }
+    }
+
+    fun markWatched() = viewModelScope.launch {
+        withContext(Dispatchers.IO) {
+            val point = graph.progress.find(movieId) ?: PlaybackDatabase.Progress().apply { this.movieId = this@DetailViewModel.movieId }
+            point.updated = maxOf(System.currentTimeMillis(), point.updated + 1)
+            point.finished = true
+            point.dirty = true
+            graph.progress.save(point)
+        }
+        Playback.revision.value += 1
+        com.movieworld.android.SyncHooks.schedule(0)
     }
 
     fun toggleFavourite() = graph.favourites.toggle(movieId)

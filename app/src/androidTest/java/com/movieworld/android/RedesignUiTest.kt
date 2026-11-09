@@ -70,6 +70,25 @@ class RedesignUiTest {
         compose.onNodeWithText("Release year").assertIsDisplayed()
     }
 
+    @Test fun actorDropdownShowsCountsAndSelectsTheActorId() {
+        var selected: Actor? = null
+        val actors = listOf(Actor("7", "Tom Hanks", 12), Actor("8", "Tom Hardy", 1))
+        compose.setContent {
+            MovieWorldTheme {
+                SearchContent(
+                    SearchUiState(query = "Tom", byActor = true, actors = actors,
+                        actorSuggestionsVisible = true, results = emptyList()),
+                    {}, {}, {}, { _, _ -> }, {}, {}, onActor = { selected = it },
+                )
+            }
+        }
+        compose.onNodeWithText("Tom Hanks").assertIsDisplayed()
+        compose.onNodeWithText("12 movies").assertIsDisplayed()
+        compose.onNodeWithText("1 movie").assertIsDisplayed()
+        compose.onNodeWithText("Tom Hardy").performClick()
+        assertEquals("8", selected?.id)
+    }
+
     @Test fun detailShowsPlayOrResumeAndDisablesDuringSession() {
         val details = MovieDetails("Overview", "https://t.me/channel/1", null, listOf("Drama"), listOf("Actor One"))
         compose.setContent {

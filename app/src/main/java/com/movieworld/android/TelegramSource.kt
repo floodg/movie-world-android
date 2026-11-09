@@ -51,15 +51,26 @@ private class TelegramVault(context: Context) {
     }
 }
 
+class TelegramRequestException(val code: Int, detail: String) : IllegalStateException("Telegram $code: $detail") {
+    val retryAfterSeconds: Long? = Regex("(?:retry after |FLOOD_WAIT_)([0-9]+)", RegexOption.IGNORE_CASE)
+        .find(detail)?.groupValues?.get(1)?.toLongOrNull()
+}
+
 data class TelegramState(val step: String = "setup", val error: String? = null)
 data class TelegramMedia(val file: TdApi.File, val mime: String)
 
 class TelegramSource private constructor(private val context: Context) {
+    private val retention = context.getSharedPreferences("movie-retention", Context.MODE_PRIVATE)
+    private val cacheLock = kotlinx.coroutines.sync.Mutex()
+    private var activeFileId: Int? = null
+    private var cleanupJob: Job? = null
     private val vault = TelegramVault(context)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var client: Client? = null
     private val mutableState = MutableStateFlow(TelegramState())
     val state = mutableState.asStateFlow()
+
+    private val sent = java.util.concurrent.ConcurrentHashMap<Long, TdApi.Message>()
 
     @Synchronized
     fun start() {
@@ -68,6 +79,8 @@ class TelegramSource private constructor(private val context: Context) {
         System.loadLibrary("tdjni")
         Client.execute(TdApi.SetLogVerbosityLevel(0))
         client = Client.create({ update ->
+            if (update is TdApi.UpdateMessageSendSucceeded) sent[update.oldMessageId] = update.message
+            if (update is TdApi.UpdateMessageSendFailed) sent[update.oldMessageId] = update.message
             if (update is TdApi.UpdateAuthorizationState) {
                 val authorization = update.authorizationState
                 val step = when (authorization) {
@@ -82,6 +95,14 @@ class TelegramSource private constructor(private val context: Context) {
                 mutableState.value = TelegramState(step)
                 if (authorization is TdApi.AuthorizationStateReady) {
                     scope.launch { joinMovieChannel() }
+                    if (cleanupJob?.isActive != true) cleanupJob = scope.launch {
+                        while (isActive) {
+                            try { cleanupExpiredMovies() }
+                            catch (error: CancellationException) { throw error }
+                            catch (_: Exception) { /* Retry on the next pass. */ }
+                            delay(60 * 60 * 1000L)
+                        }
+                    }
                 }
                 if (authorization is TdApi.AuthorizationStateWaitTdlibParameters) {
                     scope.launch { authRequest {
@@ -91,7 +112,7 @@ class TelegramSource private constructor(private val context: Context) {
                             databaseEncryptionKey = databaseKey()
                             useFileDatabase = true
                             useChatInfoDatabase = true
-                            useMessageDatabase = false
+                            useMessageDatabase = true
                             useSecretChats = false
                             apiId = requireNotNull(vault.get("api-id")).toInt()
                             apiHash = requireNotNull(vault.get("api-hash"))
@@ -151,6 +172,15 @@ class TelegramSource private constructor(private val context: Context) {
         }
     }
 
+    suspend fun signOutAccount() {
+        check(!Playback.state.value.active) { "Stop TV playback before signing out of Telegram." }
+        request(TdApi.LogOut())
+        withTimeout(15_000) { state.first { it.step == "closed" } }
+        client = null
+        vault.clearCredentials()
+        mutableState.value = TelegramState()
+    }
+
     suspend fun resetConfiguration() {
         check(!Playback.state.value.active) { "Stop TV playback before changing Telegram settings." }
         if (client != null) {
@@ -191,7 +221,7 @@ class TelegramSource private constructor(private val context: Context) {
             } else active.send(function) { result ->
                 if (continuation.isActive) {
                     if (result is TdApi.Error) continuation.resumeWithException(
-                        IllegalStateException("Telegram ${result.code}: ${result.message}"))
+                        TelegramRequestException(result.code, result.message))
                     else {
                         @Suppress("UNCHECKED_CAST")
                         continuation.resume(result as T)
@@ -199,6 +229,19 @@ class TelegramSource private constructor(private val context: Context) {
                 }
             }
         }
+    }
+
+    suspend fun awaitSent(message: TdApi.Message): TdApi.Message = withTimeout(60_000) {
+        if (message.sendingState == null) return@withTimeout message
+        while (true) {
+            val result = sent.remove(message.id)
+            if (result != null) {
+                check(result.sendingState == null) { "Telegram upload failed; local data kept" }
+                return@withTimeout result
+            }
+            delay(200)
+        }
+        @Suppress("UNREACHABLE_CODE") message
     }
 
     suspend fun resolve(url: String): TelegramMedia {
@@ -219,11 +262,59 @@ class TelegramSource private constructor(private val context: Context) {
         catch (_: Exception) { /* A fully loaded list returns 404. Link resolution remains authoritative. */ }
         val message = request(TdApi.GetMessageLinkInfo(url)).message
             ?: error("This Telegram post is unavailable. Check channel membership in Telegram.")
-        return resolveAlbumVideo(message) { current ->
-            // TDLib IDs are opaque: fetch the next newer message through history.
-            request(TdApi.GetChatHistory(current.chatId, current.id, -1, 2, false))
-                .messages.filter { it.id > current.id }.minByOrNull { it.id }
+        // History can return only the cached poster even with onlyLocal=false.
+        // Resolve adjacent Telegram post links directly; the resolver still checks
+        // chat and album identity before accepting any video.
+        var postId = uri.lastPathSegment?.toLongOrNull()
+            ?: error("This title does not have a valid Telegram post link.")
+        val postPrefix = url.substringBefore('?').substringBeforeLast('/')
+        return resolveAlbumVideo(message) {
+            postId += 1
+            request(TdApi.GetMessageLinkInfo("$postPrefix/$postId")).message
         } ?: error("No video was found in this Telegram album. Open it in Telegram to check the post.")
+    }
+
+    private suspend fun cleanupExpiredMovies() {
+        cacheLock.lock()
+        try {
+            val now = System.currentTimeMillis()
+            for ((key, value) in retention.all) {
+                val id = key.toIntOrNull() ?: continue
+                val lastPlayed = value as? Long ?: continue
+                if (!MovieRetention.expired(lastPlayed, now, id == activeFileId)) continue
+                request(TdApi.DeleteFile(id))
+                retention.edit().remove(key).apply()
+            }
+        } finally { cacheLock.unlock() }
+    }
+
+    suspend fun protectMovie(media: TelegramMedia) {
+        cacheLock.lock()
+        try {
+            activeFileId = media.file.id
+            // Existing downloads begin their retention period when first used after upgrade.
+            val key = media.file.id.toString()
+            if (!retention.contains(key)) retention.edit().putLong(key, System.currentTimeMillis()).apply()
+        } finally { cacheLock.unlock() }
+    }
+
+    fun recordMoviePlayback() {
+        activeFileId?.let {
+            val key = it.toString()
+            val now = System.currentTimeMillis()
+            if (now - retention.getLong(key, 0) >= 60_000)
+                retention.edit().putLong(key, now).apply()
+        }
+    }
+
+    suspend fun releaseMovie(played: Boolean) {
+        cacheLock.lock()
+        try {
+            activeFileId?.let {
+                if (played) retention.edit().putLong(it.toString(), System.currentTimeMillis()).apply()
+            }
+            activeFileId = null
+        } finally { cacheLock.unlock() }
     }
 
     suspend fun prepare(media: TelegramMedia): TelegramMedia {
