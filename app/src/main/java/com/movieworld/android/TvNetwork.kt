@@ -122,11 +122,14 @@ class TvNetwork(context: Context) {
                <s:Body><u:$name xmlns:u="${tv.service}">$params</u:$name></s:Body></s:Envelope>"""))
     }
 
-    fun play(tv: Renderer, url: String, title: String, mime: String) {
-        val metadata = """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+    fun play(tv: Renderer, url: String, title: String, mime: String, subtitleUrl: String? = null) {
+        val captions = subtitleUrl?.let {
+            "<sec:CaptionInfoEx sec:type=\"srt\">${escapeXml(it)}</sec:CaptionInfoEx>"
+        }.orEmpty()
+        val metadata = """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:sec="http://www.sec.co.kr/">
             <item id="1" parentID="0" restricted="1"><dc:title>${escapeXml(title)}</dc:title>
             <upnp:class>object.item.videoItem.movie</upnp:class>
-            <res protocolInfo="http-get:*:$mime:DLNA.ORG_OP=01;DLNA.ORG_CI=0">${escapeXml(url)}</res></item></DIDL-Lite>"""
+            <res protocolInfo="http-get:*:$mime:DLNA.ORG_OP=01;DLNA.ORG_CI=0">${escapeXml(url)}</res>$captions</item></DIDL-Lite>"""
         try { action(tv, "Stop") } catch (_: Exception) { }
         action(tv, "SetAVTransportURI", mapOf("CurrentURI" to url, "CurrentURIMetaData" to metadata))
         action(tv, "Play", mapOf("Speed" to "1"))

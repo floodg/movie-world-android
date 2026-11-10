@@ -32,7 +32,7 @@ object Playback {
     val state = mutableState.asStateFlow()
     val revision = MutableStateFlow(0L)
 
-    fun start(context: Context, movie: Movie, telegram: String?, restart: Boolean, localUri: String? = null) {
+    fun start(context: Context, movie: Movie, telegram: String?, restart: Boolean, localUri: String? = null, subtitleUri: String? = null, subtitleDelayMs: Int = 0) {
         if (state.value.active) return
         val intent = Intent(context, PlaybackService::class.java).apply {
             action = "start"
@@ -41,6 +41,8 @@ object Playback {
             putExtra("telegram", telegram)
             putExtra("restart", restart)
             putExtra("local", localUri)
+            putExtra("subtitle", subtitleUri)
+            putExtra("subtitle-delay", subtitleDelayMs)
         }
         androidx.core.content.ContextCompat.startForegroundService(context, intent)
     }
@@ -221,7 +223,11 @@ class PlaybackService : Service() {
         val saved = if (!restart && previous != null &&
             (previous.duration == 0L || previous.position < previous.duration - 30)) previous.position else 0L
         val local = intent.getStringExtra("local")
-        if (local == null) {
+        val subtitleUri = intent.getStringExtra("subtitle")
+        val subtitleKey = subtitleSourceKey(currentId, intent.getStringExtra("telegram"))
+        val cachedSubtitles = subtitleCache(this)
+        val hasCachedSubtitle = cachedSubtitles.get(subtitleKey)?.enabled == true
+        if (local == null && subtitleUri == null && !hasCachedSubtitle) {
             val pcAddress = prefs.getString("pc-server", "").orEmpty()
             if (pcAddress.isNotBlank()) {
                 update("Checking PC for a saved movie…")
@@ -240,9 +246,25 @@ class PlaybackService : Service() {
                 }
             }
         }
+        var subtitleFile: File? = null
         var temporary: File? = null
         var played = false
         try {
+            if (subtitleUri != null) {
+                val uri = android.net.Uri.parse(subtitleUri)
+                require(uri.scheme == "content") { "Choose subtitles from the Android file picker." }
+                val captions = contentResolver.openInputStream(uri)?.use {
+                    SrtSubtitles.prepare(it, intent.getIntExtra("subtitle-delay", 0))
+                } ?: error("Cannot open the selected subtitles. Choose the SRT again.")
+                subtitleFile = File.createTempFile("tv-subtitles-", ".srt", cacheDir)
+                subtitleFile.writeText(captions, Charsets.UTF_8)
+            }
+            if (subtitleUri == null && hasCachedSubtitle) {
+                subtitleFile = File.createTempFile("tv-subtitles-", ".srt", cacheDir)
+                check(cachedSubtitles.prepareForPlayback(subtitleKey, subtitleFile)) {
+                    "Cached subtitles were cleared. Find or import them again before playing."
+                }
+            }
             val media: Pair<File, String> = if (local != null) {
                 update("Preparing selected video…")
                 val uri = android.net.Uri.parse(local)
@@ -285,11 +307,11 @@ class PlaybackService : Service() {
             }
             currentCoroutineContext().ensureActive()
             check(media.first.length() > 0) { "The video is empty." }
-            mediaServer = MediaServer(net.address, media.first, media.second)
+            mediaServer = MediaServer(net.address, media.first, media.second, subtitleFile)
             update("Starting ${tv.name}…")
             foreground(false)
             ownsTransport = true
-            net.play(tv, mediaServer!!.url, Playback.state.value.title, media.second)
+            net.play(tv, mediaServer!!.url, Playback.state.value.title, media.second, mediaServer!!.subtitleUrl)
             var confirmed = false
             var failures = 0
             var stopping = 0
@@ -360,6 +382,7 @@ class PlaybackService : Service() {
                 delay(2_000)
             }
         } finally {
+            subtitleFile?.delete()
             temporary?.delete()
             withContext(NonCancellable) { source?.releaseMovie(played) }
         }

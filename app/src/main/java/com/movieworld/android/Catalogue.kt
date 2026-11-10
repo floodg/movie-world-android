@@ -42,6 +42,12 @@ class Catalogue(private val context: Context) {
         return SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use(block)
     }
 
+    internal fun subtitleIdentity(id: String): SubtitleIdentity? = read { db ->
+        db.rawQuery("SELECT $title, m.release_year, m.imdb_id, m.tmdb_id FROM movies m WHERE m.id = ? AND $visible", arrayOf(id)).use { rows ->
+            if (rows.moveToFirst()) SubtitleIdentity(rows.getString(0), rows.getString(1), rows.getString(2), rows.getString(3)) else null
+        }
+    }
+
     fun genres(): List<Genre> = read { db ->
         db.rawQuery(
             """SELECT g.id, g.name FROM genres g WHERE g.name <> 'Adult'
