@@ -21,21 +21,21 @@ internal class OpenSubtitlesClient(private val api: (String, String, String?) ->
             else -> { params["query"] = movie.title; movie.year?.toIntOrNull()?.let { params["year"] = it.toString() } }
         }
         val query = params.entries.joinToString("&") { (key, value) -> "$key=${URLEncoder.encode(value, "UTF-8")}" }
-        val data = json.parseToJsonElement(api("GET", "/subtitles?$query", null)).jsonObject["data"]?.jsonArray ?: return emptyList()
+        val data = json.parseToJsonElement(api("GET", "/subtitles?$query", null)).jsonObject["data"] as? JsonArray ?: return emptyList()
         return buildList {
             for (entry in data) {
-                val attrs = entry.jsonObject["attributes"]?.jsonObject ?: continue
+                val attrs = (entry as? JsonObject)?.get("attributes") as? JsonObject ?: continue
                 val lang = attrs["language"]?.jsonPrimitive?.contentOrNull ?: continue
                 if (lang != language || (attrs["nb_cd"]?.jsonPrimitive?.intOrNull ?: 1) > 1) continue
-                val feature = attrs["feature_details"]?.jsonObject
+                val feature = attrs["feature_details"] as? JsonObject
                 val type = feature?.get("feature_type")?.jsonPrimitive?.contentOrNull
                 if (type != null && type != "Movie") continue
                 val release = attrs["release"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 val count = attrs["download_count"]?.jsonPrimitive?.intOrNull ?: 0
-                val files = attrs["files"]?.jsonArray ?: continue
+                val files = attrs["files"] as? JsonArray ?: continue
                 // Multi-part releases do not fit one complete movie file.
                 if (files.size != 1) continue
-                val file = files[0].jsonObject
+                val file = files[0] as? JsonObject ?: continue
                 val id = file["file_id"]?.jsonPrimitive?.longOrNull?.takeIf { it > 0 } ?: continue
                 val name = file["file_name"]?.jsonPrimitive?.contentOrNull.orEmpty()
                 add(SubtitleMatch(id, release.ifBlank { name }.ifBlank { "Subtitle $id" }.take(250), lang, count))

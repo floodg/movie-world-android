@@ -49,8 +49,11 @@ internal class SubtitleSettings(context: Context) {
     fun save(apiKey: String, language: String) {
         require(Regex("[A-Za-z0-9_-]{8,200}").matches(apiKey)) { "Enter your OpenSubtitles API key." }
         require(Regex("[a-z]{2,3}(-[a-z]{2})?").matches(language)) { "Use a language code such as en, es or fr." }
+        val changedKey = get("api-key") != apiKey
         put("api-key", apiKey)
-        check(prefs.edit().putString("language", language).remove("token").remove("base").commit())
+        val editor = prefs.edit().putString("language", language)
+        if (changedKey) editor.remove("token").remove("base")
+        check(editor.commit())
     }
     fun signedIn(token: String, base: String) {
         val address = URL(if (base.startsWith("https://")) base else "https://$base")

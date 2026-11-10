@@ -38,4 +38,14 @@ class OpenSubtitlesClientTest {
         val client=OpenSubtitlesClient({ _,_,_-> """{"data":[]}""" }, { error("Must not download") })
         assertTrue(client.search(SubtitleIdentity("X",null,null,null),"en").isEmpty())
     }
+    @Test fun incompleteResultsDoNotDiscardOtherMatches() {
+        val result = """{"data":[null,{"attributes":null},
+          {"attributes":{"language":"en","files":null}},
+          {"attributes":{"language":"en","files":[null]}},
+          {"attributes":{"language":"en","feature_details":null,"files":[{"file_id":999,"file_name":"movie.srt"}]}}
+        ]}"""
+        val client = OpenSubtitlesClient({ _, _, _ -> result }, { error("Must not download") })
+        assertEquals(listOf(999L), client.search(SubtitleIdentity("Movie", null, null, null), "en").map { it.fileId })
+    }
+
 }
