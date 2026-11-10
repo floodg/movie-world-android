@@ -12,10 +12,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** A session exposes exactly one completed file, reachable only through a random capability path. */
-class MediaServer(address: InetAddress, private val file: File, private val mime: String) : Closeable {
+class MediaServer(address: InetAddress, private val file: File, private val mime: String, private val subtitle: File? = null) : Closeable {
     private val server = ServerSocket().apply { bind(InetSocketAddress(address, 0), 8) }
     private val token = "/media/${UUID.randomUUID()}"
     val url = "http://${address.hostAddress}:${server.localPort}$token"
+    val subtitleUrl: String? = subtitle?.let { "$url/subtitles.srt" }
     private val pool = java.util.concurrent.ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
         java.util.concurrent.ArrayBlockingQueue<Runnable>(8))
     private val sockets = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
@@ -63,15 +64,20 @@ class MediaServer(address: InetAddress, private val file: File, private val mime
             headers[text.substringBefore(':').lowercase(java.util.Locale.US)] = text.substringAfter(':').trim()
         }
         val output = socket.getOutputStream()
+        val isSubtitle = subtitle != null && request.getOrNull(1) == "$token/subtitles.srt"
+        val servedFile = if (isSubtitle) subtitle!! else file
+        val servedMime = if (isSubtitle) "application/x-subrip; charset=utf-8" else mime
         fun respond(code: String, size: Long, extra: String = "") {
             output.write(("HTTP/1.1 $code\r\nContent-Length: $size\r\nConnection: close\r\n" +
-                "Accept-Ranges: bytes\r\nContent-Type: $mime\r\n" +
+                "Accept-Ranges: bytes\r\nContent-Type: $servedMime\r\n" +
                 "transferMode.dlna.org: Streaming\r\ncontentFeatures.dlna.org: DLNA.ORG_OP=01;DLNA.ORG_CI=0\r\n" +
+                (if (!isSubtitle && request.getOrNull(1) == token && subtitleUrl != null)
+                    "CaptionInfo.sec: $subtitleUrl\r\nCaptionInfoEx.sec: $subtitleUrl\r\n" else "") +
                 extra + "\r\n").toByteArray(Charsets.US_ASCII))
         }
-        if (request.size < 2 || request[1] != token) { respond("404 Not Found", 0); return }
+        if (request.size < 2 || (request[1] != token && !isSubtitle)) { respond("404 Not Found", 0); return }
         if (request[0] !in listOf("GET", "HEAD")) { respond("405 Method Not Allowed", 0, "Allow: GET, HEAD\r\n"); return }
-        val length = file.length()
+        val length = servedFile.length()
         val bounds = byteRange(headers["range"], length)
         if (bounds == null) { respond("416 Range Not Satisfiable", 0, "Content-Range: bytes */$length\r\n"); return }
         val (start, end) = bounds
@@ -79,7 +85,7 @@ class MediaServer(address: InetAddress, private val file: File, private val mime
         respond(if (headers["range"] != null) "206 Partial Content" else "200 OK", count,
             if (headers["range"] != null) "Content-Range: bytes $start-$end/$length\r\n" else "")
         if (request[0] == "HEAD") return
-        RandomAccessFile(file, "r").use { media ->
+        RandomAccessFile(servedFile, "r").use { media ->
             media.seek(start)
             val buffer = ByteArray(128 * 1024)
             var remaining = count

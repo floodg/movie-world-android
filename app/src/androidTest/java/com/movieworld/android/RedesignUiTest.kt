@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.movieworld.android.ui.detail.DetailContent
@@ -98,8 +99,13 @@ class RedesignUiTest {
             }
         }
         compose.onNodeWithText("Play on TV").assertIsDisplayed()
-        compose.onNodeWithText("Telegram").assertIsDisplayed()
-        compose.onNodeWithText("Actor One").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Add to favourites").assertExists()
+        compose.onNodeWithText("Telegram").assertDoesNotExist()
+        compose.onNodeWithText("More options").performScrollTo().performClick()
+        compose.onNodeWithText("Telegram").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("More options").performScrollTo().performClick()
+        compose.onNodeWithText("Telegram").assertDoesNotExist()
+        compose.onNodeWithText("Actor One").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun detailResumeLabelAndStartOver() {
@@ -111,8 +117,9 @@ class RedesignUiTest {
             }
         }
         compose.onNodeWithText("Resume · 01:02:03").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithText("Start over").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithText("In My List").assertIsDisplayed()
+        compose.onNodeWithText("More options").performScrollTo().performClick()
+        compose.onNodeWithText("Start over").performScrollTo().assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Remove from favourites").assertExists()
     }
 
     @Test fun miniPlayerStates() {

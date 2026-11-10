@@ -67,3 +67,37 @@ The debug APK is app/build/outputs/apk/debug/app-debug.apk. Gradle installs the 
 TDLib is supplied by io.github.tdlib-android:core:0.1.1 from Maven Central, a community prebuilt package of Telegram TDLib. Native loading is checked on-device. Upstream documentation is at https://core.telegram.org/tdlib/docs/ and package setup is at https://tdlib-android.vercel.app/setup.
 
 Downloaded Telegram movies expire seven days after their last playback session ends. Cleanup runs when Telegram starts and hourly while the app process remains alive; expired movies are removed the next time the app runs if it was closed. Active playback is protected. The 8 GB quota may remove files sooner. Existing downloads start being tracked when first used after this upgrade.
+
+
+### Subtitles on TV
+
+Open **TV settings → Subtitle downloads** (or **Find subtitles** on a movie).
+Create an OpenSubtitles.com account and API key using the setup link, enter the
+key, choose a language code (English `en` by default), then **Save and test**.
+Optional username/password sign-in uses your account allowance; only the API
+key and sign-in token are stored, encrypted with Android Keystore. Passwords
+are not retained. Provider quotas apply. Disconnect removes the credentials.
+
+On a movie tap **Find subtitles**, choose the matching release, and download it
+directly into the app cache. Search uses IMDb/TMDB IDs when available, otherwise
+title and year. Results from multi-part releases are excluded. You can also
+**Import SRT** once. A selected subtitle is linked to the stable movie ID and
+Telegram source, reused automatically by Play/Resume from any screen, and
+remains available offline. Timing and enabled/off state are remembered. Turn
+off keeps the file for **Use cached subtitles**; another release replaces it
+only after successful validation. These subtitles are separate from the video,
+so the movie does not need to be repackaged or re-downloaded just to add captions.
+
+The subtitle cache is disposable (up to 100 movies / 20 MB); Android or cache
+eviction may clear it. Source files are validated UTF-8/BOM-marked UTF-16 SRT,
+limited to 2 MB. Timing adjusts in half-second steps up to 30 seconds either way.
+Stop casting before changing subtitles. Playback uses a private temporary copy,
+so cache replacement/eviction cannot alter an active subtitle stream.
+
+With cached subtitles enabled the phone hosts both video and captions, skipping
+the optional PC cache. It downloads the Telegram movie only if not already
+retained on the phone. Without an external subtitle enabled the PC cache path
+works as before. Samsung CaptionInfo headers and DIDL metadata advertise the
+caption URL; physical RU7100 display and provider downloads with a real API key
+still require acceptance testing. Embedded tracks use the TV's playback controls.
+No transcription or automatic guarantee of release timing is included.

@@ -27,13 +27,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -51,6 +55,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -142,6 +147,8 @@ fun DetailContent(
     val details = state.details
     val window = windowSize()
     val backdropHeight = if (window.isLandscape) window.height * 0.7f else window.width * 0.62f + 60.dp
+    var subtitleBusy by remember(movie?.id) { mutableStateOf(false) }
+    var optionsExpanded by rememberSaveable(movie?.id) { mutableStateOf(false) }
     var localChoice by rememberSaveable { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -156,6 +163,18 @@ fun DetailContent(
                     }
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(ScrimStrong, ScrimTransparent), endY = 360f)))
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to ScrimTransparent, 1f to Night)))
+                    if (movie != null) {
+                        IconToggleButton(
+                            checked = inList,
+                            onCheckedChange = { onToggleFavourite() },
+                            modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(Dimens.sm)
+                                .size(Dimens.touchTarget).background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                        ) {
+                            Icon(if (inList) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                contentDescription = if (inList) "Remove from favourites" else "Add to favourites",
+                                tint = if (inList) MaterialTheme.colorScheme.primary else Color.White)
+                        }
+                    }
                 }
             }
             if (movie == null) {
@@ -181,7 +200,7 @@ fun DetailContent(
             }
             item(key = "actions") {
                 val resume = state.resume
-                val canStart = !cast.active
+                val canStart = !cast.active && !subtitleBusy
                 val ownSession = cast.active && cast.movieId == movie.id
                 Column(Modifier.padding(horizontal = Dimens.screenPadding, vertical = Dimens.lg)) {
                     if (resume >= 15 && state.watched != null) {
@@ -199,26 +218,46 @@ fun DetailContent(
                     )
                     Spacer(Modifier.height(Dimens.md))
                     val link = details?.telegram?.takeIf(::isTelegramLink)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.sm), verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
-                        if (resume >= 15) SecondaryButton("Start over", onClick = { onPlay(true) }, icon = AppIcons.Replay, enabled = canStart)
-                        SecondaryButton(
-                            if (inList) "In My List" else "My List", onClick = onToggleFavourite,
-                            icon = if (inList) Icons.Filled.Check else Icons.Filled.Add,
-                        )
-                        SecondaryButton(
-                            if (state.finished) "Watched" else "Mark watched",
-                            onClick = onMarkWatched, icon = Icons.Filled.Check,
-                            enabled = !state.finished && !ownSession,
-                        )
-                        if (link != null) SecondaryButton("Telegram", onClick = { onOpenTelegram(link) }, icon = AppIcons.OpenInNew)
-                        SecondaryButton(
-                            "Downloaded video", icon = AppIcons.VideoFile, enabled = canStart,
-                            onClick = { if (resume >= 15) localChoice = true else onPlayLocal(false) },
-                        )
-                    }
-                    if (details != null && link == null) {
-                        Spacer(Modifier.height(Dimens.sm))
-                        Text("Telegram link unavailable", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow).animateContentSize()) {
+                        TextButton(
+                            onClick = { optionsExpanded = !optionsExpanded },
+                            enabled = !subtitleBusy,
+                            modifier = Modifier.fillMaxWidth().semantics {
+                                stateDescription = if (optionsExpanded) "Expanded" else "Collapsed"
+                            },
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = Dimens.sm), verticalAlignment = Alignment.CenterVertically) {
+                                Text("More options", modifier = Modifier.weight(1f))
+                                Icon(if (optionsExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = null)
+                            }
+                        }
+                        if (optionsExpanded) {
+                            Column(Modifier.padding(start = Dimens.md, end = Dimens.md, bottom = Dimens.md)) {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.sm), verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
+                                    if (resume >= 15) SecondaryButton("Start over", onClick = { onPlay(true) }, icon = AppIcons.Replay, enabled = canStart)
+                                    SecondaryButton(
+                                        if (state.finished) "Watched" else "Mark watched",
+                                        onClick = onMarkWatched, icon = Icons.Filled.Check,
+                                        enabled = !state.finished && !ownSession,
+                                    )
+                                    if (link != null) SecondaryButton("Telegram", onClick = { onOpenTelegram(link) }, icon = AppIcons.OpenInNew)
+                                    SecondaryButton(
+                                        "Downloaded video", icon = AppIcons.VideoFile, enabled = canStart,
+                                        onClick = { if (resume >= 15) localChoice = true else onPlayLocal(false) },
+                                    )
+                                }
+                                Spacer(Modifier.height(Dimens.md))
+                                MovieSubtitleControls(movie, details?.telegram, enabled = !cast.active && details != null,
+                                    onBusy = { subtitleBusy = it })
+                                if (details != null && link == null) {
+                                    Spacer(Modifier.height(Dimens.sm))
+                                    Text("Telegram link unavailable", style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
                     }
                     error?.let {
                         Spacer(Modifier.height(Dimens.sm))
