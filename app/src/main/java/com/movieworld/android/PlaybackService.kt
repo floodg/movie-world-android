@@ -32,7 +32,7 @@ object Playback {
     val state = mutableState.asStateFlow()
     val revision = MutableStateFlow(0L)
 
-    fun start(context: Context, movie: Movie, telegram: String?, restart: Boolean, localUri: String? = null, subtitleUri: String? = null, subtitleDelayMs: Int = 0) {
+    fun start(context: Context, movie: Movie, telegram: String?, restart: Boolean, localUri: String? = null, subtitleUri: String? = null, subtitleDelayMs: Int = 0, fromPc: Boolean = false) {
         if (state.value.active) return
         val intent = Intent(context, PlaybackService::class.java).apply {
             action = "start"
@@ -43,6 +43,7 @@ object Playback {
             putExtra("local", localUri)
             putExtra("subtitle", subtitleUri)
             putExtra("subtitle-delay", subtitleDelayMs)
+            putExtra("from-pc", fromPc)
         }
         androidx.core.content.ContextCompat.startForegroundService(context, intent)
     }
@@ -110,12 +111,14 @@ class PlaybackService : Service() {
                 ownsTransport = false
                 pcPlayback = null
                 source = null
-                Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing TV playback…")
+                Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing TV playback...")
                 foreground(intent.action != "attach-pc")
                 playback = scope.launch {
                     try {
                         withTimeout(6 * 60 * 60 * 1000L) {
-                            if (intent.action == "attach-pc") attachPc(intent) else cast(intent)
+                            if (intent.action == "attach-pc") attachPc(intent)
+                            else if (intent.getBooleanExtra("from-pc", false)) castFromPc(intent)
+                            else cast(intent)
                         }
                     } catch (error: TimeoutCancellationException) {
                         update("Playback session timed out. Open Movie World to retry.")
@@ -150,6 +153,7 @@ class PlaybackService : Service() {
             }
             "pause", "resume", "seek" -> scope.launch {
                 commands.withLock {
+                    if (!Playback.state.value.active || !Playback.state.value.controllable) return@withLock
                     pcPlayback?.let { pc ->
                         try {
                             pc.control(intent.action!!, intent.getLongExtra("seconds", 0).coerceAtLeast(0))
@@ -158,6 +162,7 @@ class PlaybackService : Service() {
                         catch (error: Exception) {
                             Playback.mutableState.value = Playback.state.value.copy(warning = error.message ?: "PC control failed.")
                         }
+                        foreground(false)
                         return@withLock
                     }
                     val tv = renderer ?: return@withLock
@@ -174,9 +179,16 @@ class PlaybackService : Service() {
                                 net.seek(tv, seconds)
                             }
                         }
+                        if (intent.action == "pause" || intent.action == "resume") {
+                            val playing = intent.action == "resume"
+                            Playback.mutableState.value = Playback.state.value.copy(
+                                playing = playing, warning = null,
+                                message = if (playing) "Playing on ${tv.name}" else "Paused on ${tv.name}")
+                        }
                     } catch (error: Exception) {
                         Playback.mutableState.value = Playback.state.value.copy(warning = error.message ?: "The TV refused this control.")
                     }
+                    foreground(false)
                 }
             }
         }
@@ -188,12 +200,31 @@ class PlaybackService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, PlaybackService::class.java).setAction("stop"),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val notification = NotificationCompat.Builder(this, "tv-playback")
+        val state = Playback.state.value
+        val detail = buildString {
+            append(state.message)
+            if (state.controllable) {
+                append(" · ").append(formatTime(state.position))
+                if (state.duration > 0) append(" / ").append(formatTime(state.duration))
+            }
+            state.warning?.let { append("\n").append(it) }
+        }
+        val builder = NotificationCompat.Builder(this, "tv-playback")
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(Playback.state.value.title)
-            .setContentText(Playback.state.value.message)
+            .setContentTitle(state.title)
+            .setContentText(detail)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setContentIntent(pending).setOngoing(true).setOnlyAlertOnce(true)
-            .addAction(android.R.drawable.ic_media_pause, "Stop", stop).build()
+        if (state.controllable) {
+            val action = if (state.playing) "pause" else "resume"
+            val control = PendingIntent.getService(this, if (state.playing) 2 else 3,
+                Intent(this, PlaybackService::class.java).setAction(action),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            builder.addAction(
+                if (state.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (state.playing) "Pause" else "Resume", control)
+        }
+        val notification = builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop).build()
         var type = 0
         if (Build.VERSION.SDK_INT >= 29) {
             type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
@@ -227,18 +258,19 @@ class PlaybackService : Service() {
         val subtitleKey = subtitleSourceKey(currentId, intent.getStringExtra("telegram"))
         val cachedSubtitles = subtitleCache(this)
         val hasCachedSubtitle = cachedSubtitles.get(subtitleKey)?.enabled == true
-        if (local == null && subtitleUri == null && !hasCachedSubtitle) {
+        if (local == null) {
             val pcAddress = prefs.getString("pc-server", "").orEmpty()
             if (pcAddress.isNotBlank()) {
-                update("Checking PC for a saved movie…")
+                update("Checking PC for a saved movie...")
                 val pc = try {
                     PcPlayback(net, pcAddress).takeIf { it.cached(currentId, tv.id) }
                 } catch (error: CancellationException) { throw error }
                 catch (_: Exception) { null }
                 currentCoroutineContext().ensureActive()
                 if (pc != null) {
-                    val job = pc.start(currentId, tv.id, restart, previous)
+                    val job = pc.start(currentId, tv.id, restart, previous, subtitleSrt = pcSubtitles(intent))
                     if (job != null) {
+                        // Use the PC source even when subtitles have been selected on the phone.
                         pcPlayback = pc
                         monitorPc(pc, job)
                         return
@@ -266,7 +298,7 @@ class PlaybackService : Service() {
                 }
             }
             val media: Pair<File, String> = if (local != null) {
-                update("Preparing selected video…")
+                update("Preparing selected video...")
                 val uri = android.net.Uri.parse(local)
                 require(uri.scheme == "content") { "Choose a video from the Android file picker." }
                 val mime = contentResolver.getType(uri) ?: "video/mp4"
@@ -291,12 +323,12 @@ class PlaybackService : Service() {
                 temporary!! to mime
             } else {
                 val telegram = TelegramSource.get(this).also { source = it; it.start() }
-                update("Finding movie in Telegram…")
+                update("Finding movie in Telegram...")
                 val resolved = telegram.resolve(intent.getStringExtra("telegram") ?: error("Telegram link unavailable"))
                 telegram.protectMovie(resolved)
                 val movie = telegram.prepare(resolved)
 
-                update("Downloading movie to phone…")
+                update("Downloading movie to phone...")
                 foreground(true)
                 val file = telegram.download(movie) { bytes, total ->
                     val suffix = if (total > 0) "${bytes * 100 / total}%" else "${bytes / (1024 * 1024)} MB"
@@ -308,7 +340,7 @@ class PlaybackService : Service() {
             currentCoroutineContext().ensureActive()
             check(media.first.length() > 0) { "The video is empty." }
             mediaServer = MediaServer(net.address, media.first, media.second, subtitleFile)
-            update("Starting ${tv.name}…")
+            update("Starting ${tv.name}...")
             foreground(false)
             ownsTransport = true
             net.play(tv, mediaServer!!.url, Playback.state.value.title, media.second, mediaServer!!.subtitleUrl)
@@ -344,7 +376,7 @@ class PlaybackService : Service() {
                             check(resumeAttempts < 3) {
                                 "The TV could not resume this video. Your saved position is kept. Try Start over on TV."
                             }
-                            update("Resuming at ${formatTime(pendingResume)}…")
+                            update("Resuming at ${formatTime(pendingResume)}...")
                             try {
                                 commands.withLock { net.seek(tv, pendingResume) }
                             } catch (error: Exception) {
@@ -385,6 +417,121 @@ class PlaybackService : Service() {
             subtitleFile?.delete()
             temporary?.delete()
             withContext(NonCancellable) { source?.releaseMovie(played) }
+        }
+    }
+
+    /** Send only the small SRT; video and subtitle serving remain on the PC. */
+    private fun pcSubtitles(intent: Intent): String? {
+        val imported = intent.getStringExtra("subtitle")
+        val srt = if (imported != null) {
+            val uri = android.net.Uri.parse(imported)
+            require(uri.scheme == "content") { "Choose subtitles from the Android file picker." }
+            contentResolver.openInputStream(uri)?.use {
+                SrtSubtitles.prepare(it, intent.getIntExtra("subtitle-delay", 0))
+            } ?: error("Cannot open the selected subtitles. Choose the SRT again.")
+        } else {
+            val temporary = File.createTempFile("pc-subtitles-", ".srt", cacheDir)
+            try {
+                val key = subtitleSourceKey(currentId, intent.getStringExtra("telegram"))
+                if (subtitleCache(this).prepareForPlayback(key, temporary)) temporary.readText(Charsets.UTF_8) else null
+            } finally { temporary.delete() }
+        }
+        if (srt != null) update("Sending subtitles to PC...")
+        return srt
+    }
+
+    private suspend fun castFromPc(intent: Intent) {
+        val prefs = getSharedPreferences("tv", MODE_PRIVATE)
+        val address = prefs.getString("pc-server", "").orEmpty()
+        val selected = prefs.getString("renderer-id", "").orEmpty()
+        check(address.isNotBlank()) { "Set up your home PC in TV settings first." }
+        check(selected.isNotBlank()) { "Choose a TV in TV settings first." }
+        val pc = PcPlayback(TvNetwork(this), address)
+        update("Checking PC and TV...")
+        pc.prepare(currentId, selected)
+        wake = getSystemService(PowerManager::class.java).newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "MovieWorld:PcUpload").apply { acquire(6 * 60 * 60 * 1000L) }
+        var uploaded = false
+        try {
+            if (!pc.hasMovie(currentId)) {
+                update("Checking phone for a downloaded video...")
+                val coroutine = currentCoroutineContext()
+                val progress: (Long, Long) -> Unit = { sent, total ->
+                    coroutine.ensureActive()
+                    val percent = (sent * 100 / total).toInt()
+                    if (Playback.state.value.message != "Uploading to PC... $percent%") {
+                        update("Uploading to PC... $percent%")
+                        foreground(true)
+                    }
+                }
+                val local = getSharedPreferences("movie-local-videos", MODE_PRIVATE).getString(currentId, null)
+                val uri = local?.let { android.net.Uri.parse(it) }?.takeIf { candidate ->
+                    candidate.scheme == "content" && try {
+                        contentResolver.openAssetFileDescriptor(candidate, "r")?.use { true } == true
+                    } catch (_: java.io.FileNotFoundException) { false }
+                    catch (_: SecurityException) { false }
+                }
+                if (local != null && uri == null) {
+                    getSharedPreferences("movie-local-videos", MODE_PRIVATE).edit().remove(currentId).apply()
+                }
+                // Only inspect completed downloads; never download a phone copy for this action.
+                var phoneFile: File? = null
+                var mime = "video/mp4"
+                val telegram = intent.getStringExtra("telegram")
+                if (uri == null && telegram != null) {
+                    val tg = TelegramSource.get(this)
+                    try {
+                        tg.start()
+                        val media = tg.resolve(telegram)
+                        tg.protectMovie(media)
+                        source = tg
+                        val file = File(media.file.local.path)
+                        if (media.file.local.isDownloadingCompleted && file.isFile) {
+                            phoneFile = file
+                            mime = media.mime
+                        }
+                    } catch (error: CancellationException) { throw error }
+                    catch (_: Exception) { /* The PC can download without phone Telegram access. */ }
+                }
+                try {
+                    if (uri != null) {
+                        val descriptor = contentResolver.openAssetFileDescriptor(uri, "r")
+                            ?: error("The selected phone video is unavailable. Select it again under Downloaded video.")
+                        descriptor.use {
+                            var name = "movie.mp4"
+                            var size = it.length
+                            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME,
+                                android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                                if (cursor.moveToFirst()) {
+                                    name = cursor.getString(0) ?: name
+                                    if (!cursor.isNull(1)) size = cursor.getLong(1)
+                                }
+                            }
+                            it.createInputStream().use { input -> pc.upload(currentId, name, size, input, progress) }
+                        }
+                        uploaded = true
+                    } else if (phoneFile != null) {
+                        val ext = when (mime) {
+                            "video/x-matroska" -> "mkv"
+                            "video/webm" -> "webm"
+                            "video/x-msvideo" -> "avi"
+                            else -> phoneFile.extension.takeIf { it.lowercase() in setOf("mp4", "mkv", "webm", "avi", "mov", "m4v", "ts") } ?: "mp4"
+                        }
+                        phoneFile.inputStream().use { pc.upload(currentId, "movie.$ext", phoneFile.length(), it, progress) }
+                        uploaded = true
+                    }
+                } catch (error: PcPlaybackError) {
+                    if (error.code != "already_cached") throw error
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            update("Starting playback from PC...")
+            val job = pc.start(currentId, selected, restart, PlaybackDatabase.get(this).access().find(currentId), cachedOnly = false, subtitleSrt = pcSubtitles(intent))
+                ?: error("The PC could not start this movie. Retry Play from PC.")
+            pcPlayback = pc
+            monitorPc(pc, job)
+        } finally {
+            withContext(NonCancellable) { source?.releaseMovie(uploaded) }
         }
     }
 
@@ -433,7 +580,8 @@ class PlaybackService : Service() {
                 } catch (error: CancellationException) { throw error }
                 catch (error: Exception) {
                     Playback.mutableState.value = Playback.state.value.copy(controllable = false,
-                        warning = "Reconnecting to PC…")
+                        warning = "Reconnecting to PC...")
+                    foreground(false)
                     if (++failures >= 3) error("Lost contact with the PC. It may still be playing on the TV.")
                 }
             } while (failures > 0)

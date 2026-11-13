@@ -297,7 +297,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
             }
             if (Build.VERSION.SDK_INT >= 33) item(key = "notifications") {
                 SettingsCard(title = "Notifications", icon = Icons.Filled.Notifications, connected = null, status = null) {
-                    Text("A notification shows TV playback progress and offers Stop while the app is in the background.",
+                    Text("A notification shows TV playback progress and offers Pause, Resume and Stop while the app is in the background.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(Dimens.md))
                     SecondaryButton("Allow playback notifications", modifier = Modifier.fillMaxWidth(),

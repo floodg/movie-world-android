@@ -87,7 +87,7 @@ private fun SubtitleControlsForSource(movie: Movie, source: String, enabled: Boo
                     work { selected = withContext(Dispatchers.IO) { cache.configure(source, delayMs = current.delayMs + 500) } }
                 }) { Text("0.5s later") }
             }
-            Text("The phone will stream the movie with these subtitles. Stop playback to change them.", style = MaterialTheme.typography.bodySmall)
+            Text("Play sends these subtitles and timing to the PC when the movie is there; otherwise the phone serves them. Stop playback to change them.", style = MaterialTheme.typography.bodySmall)
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         if (!enabled) Text("Subtitle changes are available before playback.", style = MaterialTheme.typography.bodySmall)
