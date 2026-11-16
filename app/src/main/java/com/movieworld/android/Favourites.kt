@@ -23,6 +23,7 @@ class Favourites private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
+        OperationLog.record(app, "app", "Movie World opened")
         scope.launch {
             migrateLegacyPrefs()
             refreshSync()
@@ -50,6 +51,8 @@ class Favourites private constructor(context: Context) {
                 removed = if (existing == null || existing.removed != null) null else now
             }
             access.saveFavourite(row)
+            OperationLog.record(app, "favourite", if (row.removed == null) "Added to favourites; PC preparation scheduled" else "Removed from favourites", movieId = id)
+            if (row.removed == null) FavouritePreparationWorker.enqueue(app, id)
             refreshSync()
             SyncHooks.schedule(400)
         }

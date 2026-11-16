@@ -81,6 +81,11 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun TvSettingsScreen(onBack: () -> Unit) {
+    var operationHistory by remember { mutableStateOf(false) }
+    if (operationHistory) {
+        OperationHistoryScreen(onBack = { operationHistory = false })
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cloud = LocalAppGraph.current.cloud
@@ -138,6 +143,9 @@ fun TvSettingsScreen(onBack: () -> Unit) {
             contentPadding = PaddingValues(start = Dimens.screenPadding, end = Dimens.screenPadding, top = Dimens.screenPadding, bottom = Dimens.xxl),
             verticalArrangement = Arrangement.spacedBy(Dimens.lg),
         ) {
+            item(key = "operations") {
+                SecondaryButton("Operation history", modifier = Modifier.fillMaxWidth(), onClick = { operationHistory = true })
+            }
             item(key = "tv") {
                 SettingsCard(
                     title = "Your TV",

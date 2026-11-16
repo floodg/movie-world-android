@@ -106,6 +106,7 @@ class PlaybackService : Service() {
             "start", "attach-pc" -> {
                 if (playback?.isActive == true) return START_NOT_STICKY
                 currentId = intent.getStringExtra("movie") ?: return START_NOT_STICKY
+                OperationLog.record(this, "playback", "Playback requested", movieId = currentId)
                 restart = intent.getBooleanExtra("restart", false)
                 stopped = false
                 ownsTransport = false
@@ -125,6 +126,7 @@ class PlaybackService : Service() {
                     } catch (error: CancellationException) {
                         update(if (stopped) "Stopped" else "Playback session ended")
                     } catch (error: Exception) {
+                        OperationLog.record(this@PlaybackService, "playback", error.message ?: "TV playback failed", "error", currentId)
                         update(error.message ?: "TV playback failed")
                     } finally {
                         withContext(NonCancellable) {
@@ -234,6 +236,7 @@ class PlaybackService : Service() {
     }
 
     private fun update(message: String) {
+        if (message != Playback.state.value.message) OperationLog.record(this, "playback", message, movieId = currentId)
         Playback.mutableState.value = Playback.state.value.copy(message = message)
     }
 
