@@ -79,7 +79,7 @@ internal fun SubtitleSetup() {
             }
         }) { Text("Save and test") }
         if (configured) TextButton(enabled = !busy, onClick = {
-            settings.clear(); configured = false; status = "Subtitle providers disconnected. Cached subtitles are kept."
+            settings.clear(); settings.selectProvider(providerName); apiKey = ""; username = ""; password = ""; configured = false; status = "Subtitle providers disconnected. Cached subtitles are kept."
         }) { Text("Disconnect subtitle providers") }
         status?.let { Text(it, style = MaterialTheme.typography.bodySmall,
             color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }

@@ -15,7 +15,7 @@ class PcPlayback(private val net: TvNetwork, address: String) {
         private set
     private var resumePoint: JSONObject? = null
 
-    private fun request(path: String, body: JSONObject? = null, timeout: Int = 3000): JSONObject {
+    private fun request(path: String, body: JSONObject? = null, timeout: Int = 3000, maxResponseBytes: Int = 1024 * 1024): JSONObject {
         val connection = net.network.openConnection(net.validate(base + path)) as HttpURLConnection
         try {
             connection.instanceFollowRedirects = false
@@ -34,14 +34,14 @@ class PcPlayback(private val net: TvNetwork, address: String) {
             val bytes = stream?.use { input ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
-                while (output.size() <= 1024 * 1024) {
+                while (output.size() <= maxResponseBytes) {
                     val count = input.read(buffer)
                     if (count < 0) break
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
             } ?: byteArrayOf()
-            check(bytes.size <= 1024 * 1024) { "PC response was too large." }
+            check(bytes.size <= maxResponseBytes) { "PC response was too large." }
             val result = JSONObject(bytes.toString(Charsets.UTF_8))
             if (code !in 200..299) throw PcPlaybackError(result.optString("code"),
                 result.optString("error", "PC returned HTTP $code"))
@@ -62,7 +62,8 @@ class PcPlayback(private val net: TvNetwork, address: String) {
     }
 
     fun prepareFavourite(movieId: String) = request("/api/playback/prepare", JSONObject().put("movie_id", movieId.toInt()))
-    fun captions(movieId: String): String? = request("/api/playback/captions/$movieId").optString("srt").takeIf { it.isNotBlank() && it != "null" }
+    // A 2 MiB SRT can expand up to sixfold when JSON escapes Unicode/control characters.
+    fun captions(movieId: String): String? = request("/api/playback/captions/$movieId", maxResponseBytes = 12 * 1024 * 1024 + 1024).optString("srt").takeIf { it.isNotBlank() && it != "null" }
 
     fun hasMovie(movieId: String): Boolean = request("/api/playback/cache/$movieId").optBoolean("cached")
 
