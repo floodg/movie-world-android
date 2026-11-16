@@ -181,6 +181,9 @@ fun TvSettingsScreen(onBack: () -> Unit) {
             item(key = "subtitles") {
                 SubtitleSetup()
             }
+            item(key = "whisper") {
+                WhisperSetup(pcSaved)
+            }
             item(key = "pc") {
                 SettingsCard(title = "Home PC", icon = AppIcons.Tv,
                     connected = pcSaved.isNotBlank(), status = if (pcSaved.isBlank()) "Optional" else pcSaved) {

@@ -14,7 +14,7 @@ class FavouritePreparationWorker(context: Context, params: WorkerParameters) : W
         if (address.isBlank()) return Result.retry()
         return try {
             PcPlayback(TvNetwork(applicationContext), address).prepareFavourite(id)
-            OperationLog.record(applicationContext, "preparation", "PC accepted background download and captions", movieId = id)
+            OperationLog.record(applicationContext, "preparation", "PC accepted background movie preparation", movieId = id)
             Result.success()
         } catch (failure: PcPlaybackError) {
             OperationLog.record(applicationContext, "preparation", failure.message ?: "PC command failed", "error", id)

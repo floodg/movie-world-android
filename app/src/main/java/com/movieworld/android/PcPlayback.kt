@@ -54,6 +54,9 @@ class PcPlayback(private val net: TvNetwork, address: String) {
         } finally { connection.disconnect() }
     }
 
+    fun whisperSettings(enabled: Boolean? = null): JSONObject = request("/api/playback/settings",
+        enabled?.let { JSONObject().put("auto_whisper", it) })
+
     fun operations(): JSONObject = request("/api/operations", timeout = 10000)
     fun uploadOperations(events: org.json.JSONArray): JSONObject = request("/api/operations", JSONObject().put("events", events), timeout = 10000)
 

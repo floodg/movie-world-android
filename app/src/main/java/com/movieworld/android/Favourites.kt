@@ -51,7 +51,7 @@ class Favourites private constructor(context: Context) {
                 removed = if (existing == null || existing.removed != null) null else now
             }
             access.saveFavourite(row)
-            OperationLog.record(app, "favourite", if (row.removed == null) "Added to favourites; PC preparation scheduled" else "Removed from favourites", movieId = id)
+            OperationLog.record(app, "favourite", if (row.removed == null) "Added to favourites; PC download queued for home Wi-Fi" else "Removed from favourites", movieId = id)
             if (row.removed == null) FavouritePreparationWorker.enqueue(app, id)
             refreshSync()
             SyncHooks.schedule(400)
