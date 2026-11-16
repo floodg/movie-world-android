@@ -92,6 +92,7 @@ class PlaybackService : Service() {
     private var restart = false
     private var stopped = false
     private var ownsTransport = false
+    private var resumeRecovery = ResumeRecovery()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -110,6 +111,7 @@ class PlaybackService : Service() {
                 restart = intent.getBooleanExtra("restart", false)
                 stopped = false
                 ownsTransport = false
+                resumeRecovery = ResumeRecovery()
                 pcPlayback = null
                 source = null
                 Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing TV playback...")
@@ -171,8 +173,14 @@ class PlaybackService : Service() {
                     val net = network ?: return@withLock
                     try {
                         when (intent.action) {
-                            "pause" -> net.action(tv, "Pause")
-                            "resume" -> net.action(tv, "Play", mapOf("Speed" to "1"))
+                            "pause" -> {
+                                net.action(tv, "Pause")
+                                resumeRecovery.pause(android.os.SystemClock.elapsedRealtime())
+                            }
+                            "resume" -> {
+                                resumeRecovery.resume(android.os.SystemClock.elapsedRealtime(), Playback.state.value.position)
+                                net.action(tv, "Play", mapOf("Speed" to "1"))
+                            }
                             "seek" -> {
                                 val seconds = intent.getLongExtra("seconds", 0).coerceAtLeast(0)
                                 require(Playback.state.value.duration == 0L || seconds < Playback.state.value.duration) {
@@ -181,6 +189,7 @@ class PlaybackService : Service() {
                                 net.seek(tv, seconds)
                             }
                         }
+                        OperationLog.record(this@PlaybackService, "playback", "TV control ${intent.action} accepted at ${formatTime(Playback.state.value.position)}", movieId = currentId)
                         if (intent.action == "pause" || intent.action == "resume") {
                             val playing = intent.action == "resume"
                             Playback.mutableState.value = Playback.state.value.copy(
@@ -188,6 +197,8 @@ class PlaybackService : Service() {
                                 message = if (playing) "Playing on ${tv.name}" else "Paused on ${tv.name}")
                         }
                     } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        OperationLog.record(this@PlaybackService, "playback", "TV control ${intent.action} failed: ${error.message}", "error", currentId)
                         Playback.mutableState.value = Playback.state.value.copy(warning = error.message ?: "The TV refused this control.")
                     }
                     foreground(false)
@@ -342,7 +353,9 @@ class PlaybackService : Service() {
             }
             currentCoroutineContext().ensureActive()
             check(media.first.length() > 0) { "The video is empty." }
-            mediaServer = MediaServer(net.address, media.first, media.second, subtitleFile)
+            mediaServer = MediaServer(net.address, media.first, media.second, subtitleFile) { detail ->
+                OperationLog.record(this@PlaybackService, "media", detail, movieId = currentId)
+            }
             update("Starting ${tv.name}...")
             foreground(false)
             ownsTransport = true
@@ -353,13 +366,31 @@ class PlaybackService : Service() {
             val started = android.os.SystemClock.elapsedRealtime()
             var pendingResume = saved
             var resumeAttempts = 0
+            var lastTransport = ""
             while (true) {
                 currentCoroutineContext().ensureActive()
                 if (!confirmed && android.os.SystemClock.elapsedRealtime() - started > 30_000)
                     error("The TV did not start playback. It may not support this video format.")
                 val position = try {
-                    commands.withLock { net.position(tv) }
+                    commands.withLock {
+                        check(!resumeRecovery.expired(android.os.SystemClock.elapsedRealtime())) {
+                            "The TV could not resume playback. Your saved position is kept."
+                        }
+                        net.position(tv).also { sample ->
+                            check(!resumeRecovery.observe(sample.state,
+                                android.os.SystemClock.elapsedRealtime(), seeking = pendingResume > 0)) {
+                                "The TV could not resume playback. Your saved position is kept."
+                            }
+                        }
+                    }
                 } catch (error: CancellationException) { throw error }
+                catch (error: IllegalStateException) {
+                    if (resumeRecovery.expired(android.os.SystemClock.elapsedRealtime())) throw error
+                    if (++failures >= 3) throw IllegalStateException(
+                        "Lost contact with the TV. Check Wi-Fi and TV playback. ${error.message}", error)
+                    delay(2_000)
+                    continue
+                }
                 catch (error: Exception) {
                     if (++failures >= 3) throw IllegalStateException(
                         "Lost contact with the TV. Check Wi-Fi and TV playback. ${error.message}", error)
@@ -367,6 +398,12 @@ class PlaybackService : Service() {
                     continue
                 }
                 failures = 0
+                if (position.state != lastTransport) {
+                    OperationLog.record(this@PlaybackService, "playback",
+                        "TV transport $lastTransport -> ${position.state} at ${formatTime(position.seconds)} / ${formatTime(position.duration)}",
+                        movieId = currentId)
+                    lastTransport = position.state
+                }
                 if (position.state == "PLAYING" || position.state == "PAUSED_PLAYBACK") {
                     source?.recordMoviePlayback()
                     played = true
@@ -412,7 +449,24 @@ class PlaybackService : Service() {
                         message = if (position.state == "PLAYING") "Playing on ${tv.name}" else "Paused on ${tv.name}")
                     foreground(false)
                 } else if (confirmed && position.state in listOf("STOPPED", "NO_MEDIA_PRESENT")) {
-                    if (++stopping >= 2) { update("Playback ended"); break }
+                    val decision = commands.withLock {
+                        resumeRecovery.stopped(android.os.SystemClock.elapsedRealtime()).also { decision ->
+                            if (decision == ResumeRecovery.Decision.RELOAD) {
+                                update("Restoring paused playback...")
+                                net.play(tv, mediaServer!!.url, Playback.state.value.title, media.second, mediaServer!!.subtitleUrl)
+                                pendingResume = resumeRecovery.position
+                                resumeAttempts = 0
+                            }
+                        }
+                    }
+                    if (decision != ResumeRecovery.Decision.STOP) {
+                        stopping = 0
+                    } else if (++stopping >= 2) {
+                        val state = Playback.state.value
+                        val finished = state.duration > 0 && state.position >= state.duration - 30
+                        update(if (finished) "Playback ended" else "Stopped on the TV. Your saved position is kept.")
+                        break
+                    }
                 }
                 delay(2_000)
             }
