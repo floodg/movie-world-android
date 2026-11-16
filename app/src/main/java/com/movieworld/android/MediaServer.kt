@@ -12,7 +12,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** A session exposes exactly one completed file, reachable only through a random capability path. */
-class MediaServer(address: InetAddress, private val file: File, private val mime: String, private val subtitle: File? = null) : Closeable {
+class MediaServer(address: InetAddress, private val file: File, private val mime: String, private val subtitle: File? = null,
+    private val diagnostic: (String) -> Unit = {}) : Closeable {
     private val server = ServerSocket().apply { bind(InetSocketAddress(address, 0), 8) }
     private val token = "/media/${UUID.randomUUID()}"
     val url = "http://${address.hostAddress}:${server.localPort}$token"
@@ -28,11 +29,12 @@ class MediaServer(address: InetAddress, private val file: File, private val mime
                 try {
                     pool.execute {
                         try { socket.use { serve(it) } }
-                        catch (_: Exception) { }
+                        catch (error: Exception) { report("Media connection closed: ${error.javaClass.simpleName}: ${error.message}") }
                         finally { sockets -= socket }
                     }
                 } catch (_: java.util.concurrent.RejectedExecutionException) {
                     sockets -= socket
+                    report("Media connection rejected: all serving workers are busy")
                     socket.close()
                 }
             } catch (_: java.io.IOException) {
@@ -40,6 +42,10 @@ class MediaServer(address: InetAddress, private val file: File, private val mime
             }
         }
     }, "MovieWorld-media").apply { isDaemon = true; start() }
+
+    private fun report(message: String) {
+        runCatching { diagnostic(message) }
+    }
 
     private fun serve(socket: Socket) {
         socket.soTimeout = 10_000
@@ -82,6 +88,7 @@ class MediaServer(address: InetAddress, private val file: File, private val mime
         if (bounds == null) { respond("416 Range Not Satisfiable", 0, "Content-Range: bytes */$length\r\n"); return }
         val (start, end) = bounds
         val count = (end - start + 1).coerceAtLeast(0)
+        report("Media ${request[0]} ${if (isSubtitle) "subtitle" else "video"} bytes $start-$end/$length")
         respond(if (headers["range"] != null) "206 Partial Content" else "200 OK", count,
             if (headers["range"] != null) "Content-Range: bytes $start-$end/$length\r\n" else "")
         if (request[0] == "HEAD") return
