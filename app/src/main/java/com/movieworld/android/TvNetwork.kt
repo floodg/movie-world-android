@@ -15,6 +15,7 @@ data class Renderer(val name: String, val id: String, val description: String, v
 data class TvPosition(val seconds: Long, val duration: Long, val state: String)
 
 class TvNetwork(context: Context) {
+    internal val appContext = context.applicationContext
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     val network: Network = connectivity.allNetworks.firstOrNull {
         connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true

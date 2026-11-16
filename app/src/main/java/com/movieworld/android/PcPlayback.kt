@@ -45,13 +45,24 @@ class PcPlayback(private val net: TvNetwork, address: String) {
             val result = JSONObject(bytes.toString(Charsets.UTF_8))
             if (code !in 200..299) throw PcPlaybackError(result.optString("code"),
                 result.optString("error", "PC returned HTTP $code"))
+            if (body != null && !path.startsWith("/api/operations"))
+                OperationLog.record(net.appContext, "pc-command", "Command accepted: ${path.substringBefore('?')}", movieId = body.optString("movie_id", ""))
             return result
+        } catch (failure: Exception) {
+            if (!path.startsWith("/api/operations")) OperationLog.record(net.appContext, "pc-command", "${path.substringBefore('?')}: ${failure.message ?: "Request failed"}", "error", body?.optString("movie_id", "").orEmpty())
+            throw failure
         } finally { connection.disconnect() }
     }
+
+    fun operations(): JSONObject = request("/api/operations", timeout = 10000)
+    fun uploadOperations(events: org.json.JSONArray): JSONObject = request("/api/operations", JSONObject().put("events", events), timeout = 10000)
 
     fun check() {
         check(request("/api/tv/session").optBoolean("enabled")) { "Enable TV playback on the PC server first." }
     }
+
+    fun prepareFavourite(movieId: String) = request("/api/playback/prepare", JSONObject().put("movie_id", movieId.toInt()))
+    fun captions(movieId: String): String? = request("/api/playback/captions/$movieId").optString("srt").takeIf { it.isNotBlank() && it != "null" }
 
     fun hasMovie(movieId: String): Boolean = request("/api/playback/cache/$movieId").optBoolean("cached")
 

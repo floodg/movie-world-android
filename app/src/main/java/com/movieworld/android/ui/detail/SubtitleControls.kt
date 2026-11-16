@@ -72,6 +72,17 @@ private fun SubtitleControlsForSource(movie: Movie, source: String, enabled: Boo
                     results = found
                 }
             }) { Text(if (current == null) "Find subtitles" else "Find another version") }
+            TextButton(enabled = enabled && !busy, onClick = {
+                work {
+                    selected = withContext(Dispatchers.IO) {
+                        val address = context.getSharedPreferences("tv", android.content.Context.MODE_PRIVATE).getString("pc-server", "").orEmpty()
+                        require(address.isNotBlank()) { "Set the PC server address in TV settings first." }
+                        val srt = PcPlayback(TvNetwork(context), address).captions(movie.id)
+                            ?: error("PC captions are not ready yet. The movie must finish downloading and generating captions.")
+                        srt.byteInputStream().use { cache.save(source, it, "Whisper · PC captions", "en") }
+                    }
+                }
+            }) { Text("Get PC captions") }
             TextButton(enabled = enabled && !busy, onClick = { picker.launch(arrayOf("*/*")) }) { Text("Import SRT") }
             if (current != null) TextButton(enabled = enabled && !busy, onClick = {
                 work { selected = withContext(Dispatchers.IO) { cache.configure(source, enabled = !current.enabled) } }

@@ -41,14 +41,22 @@ internal class SubtitleSettings(context: Context) {
             String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
         } catch (_: Exception) { null }
     }
-    fun configured() = prefs.contains("api-key")
-    fun apiKey() = get("api-key") ?: error("Set up OpenSubtitles in TV settings first.")
+    fun provider() = prefs.getString("provider", "opensubtitles").orEmpty()
+    fun selectProvider(value: String) { require(value in setOf("subdl", "opensubtitles")); check(prefs.edit().putString("provider", value).commit()) }
+    fun configured() = if (provider() == "subdl") prefs.contains("subdl-key") else prefs.contains("api-key")
+    fun subdlKey() = get("subdl-key") ?: error("Set up SubDL in TV settings first.")
+    fun apiKey() = if (provider() == "subdl") subdlKey() else get("api-key") ?: error("Set up OpenSubtitles in TV settings first.")
     fun token() = get("token")
     fun language() = prefs.getString("language", "en").orEmpty()
     fun baseUrl(): String = prefs.getString("base", "https://api.opensubtitles.com").orEmpty()
     fun save(apiKey: String, language: String) {
-        require(Regex("[A-Za-z0-9_-]{8,200}").matches(apiKey)) { "Enter your OpenSubtitles API key." }
+        require(Regex("[A-Za-z0-9_-]{8,200}").matches(apiKey)) { "Enter your subtitle provider API key." }
         require(Regex("[a-z]{2,3}(-[a-z]{2})?").matches(language)) { "Use a language code such as en, es or fr." }
+        if (provider() == "subdl") {
+            put("subdl-key", apiKey)
+            check(prefs.edit().putString("language", language).commit())
+            return
+        }
         val changedKey = get("api-key") != apiKey
         put("api-key", apiKey)
         val editor = prefs.edit().putString("language", language)
@@ -65,7 +73,7 @@ internal class SubtitleSettings(context: Context) {
     fun clear() { check(prefs.edit().clear().commit()) }
 }
 
-internal class SubtitleProvider(context: Context) {
+internal class SubtitleProvider(private val context: Context) {
     private val settings = SubtitleSettings(context)
     private val json = Json { ignoreUnknownKeys = true }
     private val agent = "MovieWorld v${BuildConfig.VERSION_NAME}"
@@ -111,13 +119,14 @@ internal class SubtitleProvider(context: Context) {
     private fun download(address: String): ByteArray {
         var url = URL(address)
         repeat(5) {
-            require(url.protocol == "https" && (url.host == "opensubtitles.com" || url.host.endsWith(".opensubtitles.com")) &&
+            require(url.protocol == "https" && (url.host == "opensubtitles.com" || url.host.endsWith(".opensubtitles.com") || url.host == "dl.subdl.com") &&
                 url.userInfo == null && (url.port == -1 || url.port == 443)) { "OpenSubtitles returned an unsupported download address." }
             val connection = url.openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = 15000; connection.readTimeout = 20000
-                // Download hosts do not receive API credentials.
+                // Credentials are scoped to their provider, including on every redirect hop.
+                if (url.host == "dl.subdl.com") connection.setRequestProperty("X-API-Key", settings.subdlKey())
                 connection.setRequestProperty("User-Agent", agent)
                 val status = connection.responseCode
                 if (status in listOf(301, 302, 303, 307, 308)) {
@@ -130,7 +139,21 @@ internal class SubtitleProvider(context: Context) {
         }
         error("Too many subtitle download redirects.")
     }
-    fun test() { api("GET", "/infos/languages", null) }
+    private fun subdl(): SubDlClient = SubDlClient({ query ->
+        val encoded = java.net.URLEncoder.encode(settings.subdlKey(), "UTF-8")
+        val connection = URL("https://api.subdl.com/api/v1/subtitles?api_key=$encoded&$query").openConnection() as HttpURLConnection
+        try {
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 15000; connection.readTimeout = 20000
+            val code = connection.responseCode
+            check(code in 200..299) { "SubDL request failed (HTTP $code). Check your key or quota." }
+            String(bytes(connection, 2 * 1024 * 1024), Charsets.UTF_8)
+        } finally { connection.disconnect() }
+    }, ::download)
+    fun test() {
+        if (settings.provider() == "subdl") subdl().search(SubtitleIdentity("", null, "tt0133093", null), settings.language())
+        else api("GET", "/infos/languages", null)
+    }
     fun signIn(username: String, password: String) {
         val body = buildJsonObject { put("username", username); put("password", password) }.toString()
         val response = json.parseToJsonElement(api("POST", "/login", body)).jsonObject
@@ -138,6 +161,15 @@ internal class SubtitleProvider(context: Context) {
             ?: error("OpenSubtitles sign-in failed.")
         settings.signedIn(token, response["base_url"]?.jsonPrimitive?.contentOrNull ?: "api.opensubtitles.com")
     }
-    fun search(movie: SubtitleIdentity) = OpenSubtitlesClient(::api, ::download).search(movie, settings.language())
-    fun download(match: SubtitleMatch) = OpenSubtitlesClient(::api, ::download).download(match)
+    private fun <T> logged(action: String, block: () -> T): T {
+        OperationLog.record(context, "subtitles", "${settings.provider()} · $action started")
+        try {
+            return block().also { OperationLog.record(context, "subtitles", "${settings.provider()} · $action completed") }
+        } catch (failure: Exception) {
+            OperationLog.record(context, "subtitles", "${settings.provider()} · $action failed: ${failure.message.orEmpty()}", "error")
+            throw failure
+        }
+    }
+    fun search(movie: SubtitleIdentity) = logged("Search for ${movie.title}") { if (settings.provider() == "subdl") subdl().search(movie, settings.language()) else OpenSubtitlesClient(::api, ::download).search(movie, settings.language()) }
+    fun download(match: SubtitleMatch) = logged("Download subtitle") { if (match.provider == "subdl") subdl().download(match) else OpenSubtitlesClient(::api, ::download).download(match) }
 }

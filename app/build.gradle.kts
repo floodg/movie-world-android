@@ -21,6 +21,7 @@ android {
     }
 }
 dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.11.00"))

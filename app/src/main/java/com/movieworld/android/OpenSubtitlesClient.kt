@@ -4,7 +4,7 @@ import kotlinx.serialization.json.*
 import java.net.URLEncoder
 
 internal data class SubtitleIdentity(val title: String, val year: String?, val imdbId: String?, val tmdbId: String?)
-internal data class SubtitleMatch(val fileId: Long, val label: String, val language: String, val downloads: Int)
+internal data class SubtitleMatch(val fileId: Long, val label: String, val language: String, val downloads: Int, val provider: String = "opensubtitles", val url: String = "")
 
 /** Transport is injectable so matching and download behavior can be tested without credentials. */
 internal class OpenSubtitlesClient(private val api: (String, String, String?) -> String,
