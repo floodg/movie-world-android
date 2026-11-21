@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.ActivityInfo
 import android.os.IBinder
+import android.os.Build
+import android.view.View
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -17,9 +19,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -91,48 +96,86 @@ fun DevicePlayer(state: CastState, onDismiss: () -> Unit) {
     DisposableEffect(activity) {
         onDispose { if (activity?.isChangingConfigurations != true) activity?.requestedOrientation = originalOrientation }
     }
-    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    DevicePlayerWindow(state, player, landscape, onClose = close, onToggleFullscreen = {
+        landscape = !landscape
+        activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else originalOrientation
+    }, onStop = { Playback.control(context, "stop"); onDismiss() })
+}
+
+/** Video fills the window; all chrome overlays it and follows the native controls' visibility. */
+@Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun DevicePlayerWindow(
+    state: CastState,
+    player: Player?,
+    fullscreen: Boolean,
+    onClose: () -> Unit,
+    onToggleFullscreen: () -> Unit,
+    onStop: () -> Unit,
+) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val view = LocalView.current
         DisposableEffect(view, state.playing) {
             val window = (view.parent as? DialogWindowProvider)?.window
+            window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+            if (Build.VERSION.SDK_INT >= 28) window?.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             val controller = window?.let { WindowCompat.getInsetsController(it, view) }
             controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller?.hide(WindowInsetsCompat.Type.systemBars())
             if (state.playing) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         }
-        BackHandler(onBack = close)
-        Column(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = close) { Text("Back") }
-                TextButton(onClick = {
-                    landscape = !landscape
-                    activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                }) { Text(if (landscape) "Exit fullscreen" else "Fullscreen") }
-                TextButton(onClick = { Playback.control(context, "stop"); onDismiss() }) { Text(if (state.active) "Stop" else "Close") }
-            }
-            Text(state.title, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp))
-            val attached = player
-            if (attached != null) {
+        BackHandler(onBack = onClose)
+        var controlsVisible by remember { mutableStateOf(true) }
+        Box(Modifier.fillMaxSize().background(Color.Black).testTag("device-player-window")) {
+            if (player != null) {
+                val attachedPlayer = player
                 AndroidView(factory = { PlayerView(it).apply {
-                    this.player = attached
+                    controllerShowTimeoutMs = 3000
+                    setControllerAnimationEnabled(false)
+                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                        controlsVisible = visibility == View.VISIBLE
+                    })
                     setShowSubtitleButton(true)
                     setShowRewindButton(true)
                     setShowFastForwardButton(true)
-                    keepScreenOn = true
-                } }, update = { it.player = attached }, onRelease = { it.player = null },
-                    modifier = Modifier.fillMaxWidth().weight(1f))
+                    this.player = attachedPlayer
+                    showController()
+                } }, update = {
+                    if (it.player !== attachedPlayer) {
+                        it.player = attachedPlayer
+                        it.showController()
+                    }
+                }, onRelease = {
+                    it.setControllerVisibilityListener(null as PlayerView.ControllerVisibilityListener?)
+                    it.player = null
+                }, modifier = Modifier.fillMaxSize().testTag("device-video-surface"))
             } else {
-                Column(Modifier.fillMaxWidth().weight(1f).padding(24.dp), verticalArrangement = Arrangement.Center) {
+                Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp), verticalArrangement = Arrangement.Center) {
                     Text(state.message, color = if (state.active) Color.White else MaterialTheme.colorScheme.error)
                     if (state.active) {
                         Spacer(Modifier.height(16.dp))
                         val fraction = state.downloadFraction()
                         if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
                         else LinearProgressIndicator(Modifier.fillMaxWidth())
-                        TextButton(onClick = { Playback.control(context, "stop") }) { Text("Cancel") }
+                        TextButton(onClick = onStop) { Text("Cancel") }
                     }
+                }
+            }
+            if (controlsVisible || player == null) {
+                Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)))
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                    .padding(bottom = 12.dp).testTag("device-player-chrome")) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = onClose) { Text("Back") }
+                        TextButton(onClick = onToggleFullscreen) { Text(if (fullscreen) "Exit fullscreen" else "Fullscreen") }
+                        TextButton(onClick = onStop) { Text(if (state.active) "Stop" else "Close") }
+                    }
+                    Text(state.title, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

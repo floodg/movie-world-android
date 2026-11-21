@@ -26,6 +26,7 @@ internal data class PcSession(
                 else -> "PC: ${detail.ifBlank { "Preparing movie…" }}"
             },
             warning = previous.warning.takeIf { sameMovie },
+            sessionId = previous.sessionId,
         )
     }
 }

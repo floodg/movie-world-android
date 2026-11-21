@@ -27,6 +27,7 @@ data class CastState(
     val controllable: Boolean = false,
     val warning: String? = null,
     val destination: PlaybackDestination = PlaybackDestination.TV,
+    val sessionId: String = "",
 )
 object Playback {
     internal val mutableState = MutableStateFlow(CastState())
@@ -125,7 +126,8 @@ class PlaybackService : Service() {
                 val requested = intent.getStringExtra("destination")?.let { PlaybackDestination.valueOf(it) } ?: PlaybackDestination.TV
                 val initialDestination = if (intent.action == "attach-pc" || intent.getBooleanExtra("from-pc", false)) PlaybackDestination.TV else requested
                 Playback.pendingDevicePlay.set(initialDestination != PlaybackDestination.TV)
-                Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing playback…", destination = initialDestination)
+                Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing playback…",
+                    destination = initialDestination, sessionId = java.util.UUID.randomUUID().toString())
                 foreground(intent.action != "attach-pc")
                 playback = scope.launch {
                     try {

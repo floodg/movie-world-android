@@ -59,6 +59,9 @@ cached at home without replacing your existing subtitle selection or timing.
 
 Back from the video returns to the catalogue and pauses. Tap the mini player to
 reopen it. Backgrounding pauses phone playback; rotation keeps the same player.
+Fullscreen uses the entire display with controls over the video. Controls hide
+while playing; tap the video to show them. Back stays closed across rotation,
+and Stop on the mini player removes that session without opening a stopped screen.
 Progress and completion use the existing Room and Telegram sync, so watching away
 from home carries your resume position back to the TV. Network changes never
 move a movie that is already playing to another destination. Picture-in-picture,
