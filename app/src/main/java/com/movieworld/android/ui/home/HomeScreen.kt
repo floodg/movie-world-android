@@ -223,18 +223,18 @@ private fun Hero(
                 Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(Dimens.lg))
-                Row(horizontalArrangement = Arrangement.spacedBy(Dimens.md)) {
-                    PrimaryButton(
-                        text = playLabel(resume, destination), onClick = { onPlay(featured) }, icon = Icons.Filled.PlayArrow,
-                        enabled = !castActive, modifier = Modifier.weight(1.4f),
-                    )
+                PrimaryButton(
+                    text = playLabel(resume, destination), onClick = { onPlay(featured) }, icon = Icons.Filled.PlayArrow,
+                    enabled = !castActive, modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(Dimens.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(Dimens.md), verticalAlignment = Alignment.CenterVertically) {
                     SecondaryButton(
                         text = "My List", onClick = { onToggleList(movie.id) },
                         icon = if (inList) Icons.Filled.Check else Icons.Filled.Add, modifier = Modifier.weight(1f),
                     )
+                    Box(Modifier.weight(1f)) { SecondaryButtonText(text = "Details", onClick = { onOpen(movie.id) }) }
                 }
-                Spacer(Modifier.height(Dimens.sm))
-                SecondaryButtonText(text = "Details", onClick = { onOpen(movie.id) })
             }
         }
     }

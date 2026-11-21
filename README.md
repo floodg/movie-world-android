@@ -8,7 +8,7 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
   only when both the PC and TV are reachable; otherwise it plays inside this app.
 - Watch on this device with video, play/pause, a seek bar, 30-second skips,
   fullscreen, audio-track selection and cached subtitles. Movies download fully
-  before playback and can then play offline while retained in the existing cache.
+  before playback; completed downloads are reused while retained in the existing cache.
 
 - Browse the catalogue offline by genre, IMDb rating, title, actor, and release year.
 - View movie details and cast, and save favourites on the phone (My List), with automatic personal-data sync through Telegram Saved Messages.
