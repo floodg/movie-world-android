@@ -4,6 +4,12 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
 
 ## Features
 
+- Automatically discover the home PC on Wi-Fi. Play defaults to the selected TV
+  only when both the PC and TV are reachable; otherwise it plays inside this app.
+- Watch on this device with video, play/pause, a seek bar, 30-second skips,
+  fullscreen, audio-track selection and cached subtitles. Movies download fully
+  before playback; completed downloads are reused while retained in the existing cache.
+
 - Browse the catalogue offline by genre, IMDb rating, title, actor, and release year.
 - View movie details and cast, and save favourites on the phone (My List), with automatic personal-data sync through Telegram Saved Messages.
 - Open the original movie post in Telegram over Wi-Fi or mobile data.
@@ -13,7 +19,7 @@ A standalone Kotlin and Jetpack Compose movie catalogue for Android, with a bund
 ## Open in Android Studio
 
 1. Clone this repository and open its root folder in Android Studio.
-2. Install Android SDK Platform 35 and allow Gradle sync to finish. The Gradle daemon configuration requests JDK 21.
+2. Install Android SDK Platform 36.1 and allow Gradle sync to finish. The Gradle daemon configuration requests JDK 21.
 3. Select a physical Android phone running Android 8.0 or later and run the app configuration.
 4. For terminal builds on Windows, set JAVA_HOME to a suitable JDK, then run the commands below.
 
@@ -35,6 +41,38 @@ Open this folder in Android Studio and run the app on a physical Android phone. 
 
 ## Play on TV
 
+### Home and away
+
+The Home PC card in settings shows the current connection and offers **Find home
+PC** plus manual address entry. Automatic discovery requires the companion PC
+server's LAN advertisement update (`requirements.txt`, then restart the server).
+Saved addresses also work with older servers. If more than one PC is discovered,
+select the intended one. **Use phone only** disables PC discovery until **Find
+home PC** or **Check and save PC** is used again.
+
+The main Play/Resume action follows the current connection. Under **More options**,
+choose **Play on this device** or **Play on TV** explicitly. Phone playback needs
+no TV setup and works over mobile data with the existing Telegram sign-in. A video
+download begins only after you request playback. Missing PC captions never block
+playback; ready captions for My List, Continue Watching and the open movie are
+cached at home without replacing your existing subtitle selection or timing.
+
+Back from the video returns to the catalogue and pauses. Tap the mini player to
+reopen it. Backgrounding pauses phone playback; rotation keeps the same player.
+Fullscreen uses the entire display with controls over the video. Controls hide
+while playing; tap the video to show them. Back stays closed across rotation,
+and Stop on the mini player removes that session without opening a stopped screen.
+Progress and completion use the existing Room and Telegram sync, so watching away
+from home carries your resume position back to the TV. Network changes never
+move a movie that is already playing to another destination. Picture-in-picture,
+background audio and transcoding are not included.
+
+Build with Android SDK Platform 36.1 and JDK 21. The runtime target remains 35
+and devices running Android 8.0 or newer remain supported. Device tests include
+a generated 12-second H.264/AAC video; they do not download a movie or sign in.
+
+### Explicit TV playback
+
 1. Put the phone and Samsung TV on the same Wi-Fi network and turn the TV on.
 2. Tap the cast icon on Home to open TV settings, tap Find TVs and select the renderer. If discovery is blocked, enter the TV's full DLNA description URL and tap Check and save TV. The renderer ID is remembered so a different device at the same address is detected.
 3. In Telegram for TV playback, enter your own api_id and api_hash from https://my.telegram.org/apps. Sign in with your Telegram account, entering the Telegram sign-in code and two-step verification password if requested. After sign-in, the app automatically joins Johns Movie Channel using the configured invite. Channel setup must succeed before TV playback is ready; settings offers a retry if joining fails or admin approval is pending. Credentials are encrypted with Android Keystore. This login is separate from the installed Telegram app.
@@ -47,6 +85,10 @@ Completed videos are cached in app-private storage, with an 8 GB cache budget an
 TV codec compatibility still needs testing on the Samsung RU7100. Unsupported files require a different encoding or the Open in Telegram action. The app does not transcode. Phone/code/password Telegram login is implemented. Additional Telegram account challenges are reported in settings. If Android terminates the service, open the app and retry. Android data-sync time limits apply to downloads.
 
 ## Development and verification
+
+Connected tests are configured to leave the installed APK and its data in place
+after the run. Prefer a test device or emulator. Before testing on a personal
+phone, preserve its app data; uninstalling the app clears local setup and caches.
 
 The sibling ../movie-world repository is the read-only reference for web UI behavior, catalogue queries, and Samsung playback. See docs/android-port-plan.md.
 

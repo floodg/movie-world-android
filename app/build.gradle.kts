@@ -5,14 +5,16 @@ plugins {
 }
 android {
     namespace = "com.movieworld.android"
-    compileSdk = 35
+    compileSdk {
+        version = release(36) { minorApiLevel = 1 }
+    }
     defaultConfig {
         applicationId = "com.movieworld.android"
         minSdk = 26
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "0.4.0"
 
     }
     buildFeatures {
@@ -21,6 +23,9 @@ android {
     }
 }
 dependencies {
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

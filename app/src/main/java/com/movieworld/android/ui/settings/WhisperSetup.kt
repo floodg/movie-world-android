@@ -24,7 +24,7 @@ internal fun WhisperSetup(address: String) {
         busy = true; error = null
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), address).whisperSettings(value) }
+                val result = withContext(Dispatchers.IO) { com.movieworld.android.HomeConnection.get(context).client().whisperSettings(value) }
                 enabled = result.getBoolean("auto_whisper"); loaded = true
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message ?: "PC unavailable. Connect to home Wi-Fi to change this setting." }

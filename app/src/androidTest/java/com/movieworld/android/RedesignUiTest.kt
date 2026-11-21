@@ -31,6 +31,22 @@ class RedesignUiTest {
     private val movie = Movie("1", "Sample Movie", "2019", "7.8", null)
     private val other = Movie("2", "Other Movie", "2001", "6.1", null)
 
+    @Test fun awayDetailDefaultsToDeviceAndOffersBothDestinations() {
+        var target = ""
+        compose.setContent {
+            MovieWorldTheme {
+                DetailContent(DetailUiState(movie, null, false, similar = emptyList()), false, CastState(), null,
+                    {}, {}, {}, { target = "auto" }, {}, {}, destination = PlaybackDestination.DEVICE,
+                    onPlayDevice = { target = "device" }, onPlayTv = { target = "tv" })
+            }
+        }
+        compose.onNodeWithText("Play on this device").performClick()
+        assertEquals("auto", target)
+        compose.onNodeWithText("More options").performScrollTo().performClick()
+        compose.onNodeWithText("Play on TV").performScrollTo().performClick()
+        assertEquals("tv", target)
+    }
+
     @Test fun homeRendersHeroAndRows() {
         val progress = PlaybackDatabase.Progress().apply { movieId = "1"; position = 600; duration = 6000 }
         val state = HomeUiState(
@@ -116,7 +132,7 @@ class RedesignUiTest {
                     {}, {}, {}, {}, {}, {})
             }
         }
-        compose.onNodeWithText("Resume · 01:02:03").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithText("Resume on TV · 01:02:03").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithText("More options").performScrollTo().performClick()
         compose.onNodeWithText("Start over").performScrollTo().assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithContentDescription("Remove from favourites").assertExists()

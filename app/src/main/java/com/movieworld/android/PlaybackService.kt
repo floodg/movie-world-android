@@ -26,13 +26,17 @@ data class CastState(
     val playing: Boolean = false,
     val controllable: Boolean = false,
     val warning: String? = null,
+    val destination: PlaybackDestination = PlaybackDestination.TV,
+    val sessionId: String = "",
 )
 object Playback {
     internal val mutableState = MutableStateFlow(CastState())
     val state = mutableState.asStateFlow()
     val revision = MutableStateFlow(0L)
+    @Volatile internal var deviceVisible = false
+    internal val pendingDevicePlay = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    fun start(context: Context, movie: Movie, telegram: String?, restart: Boolean, localUri: String? = null, subtitleUri: String? = null, subtitleDelayMs: Int = 0, fromPc: Boolean = false) {
+    fun start(context: Context, movie: Movie, telegram: String?, restart: Boolean, localUri: String? = null, subtitleUri: String? = null, subtitleDelayMs: Int = 0, fromPc: Boolean = false, destination: PlaybackDestination = PlaybackDestination.AUTO) {
         if (state.value.active) return
         val intent = Intent(context, PlaybackService::class.java).apply {
             action = "start"
@@ -44,6 +48,7 @@ object Playback {
             putExtra("subtitle", subtitleUri)
             putExtra("subtitle-delay", subtitleDelayMs)
             putExtra("from-pc", fromPc)
+            putExtra("destination", destination.name)
         }
         androidx.core.content.ContextCompat.startForegroundService(context, intent)
     }
@@ -52,11 +57,10 @@ object Playback {
     suspend fun observePc(context: Context) {
         if (state.value.active) return
         val prefs = context.getSharedPreferences("tv", Context.MODE_PRIVATE)
-        val address = prefs.getString("pc-server", "").orEmpty()
         val selected = prefs.getString("renderer-id", "").orEmpty()
-        if (address.isBlank() || selected.isBlank()) return
+        if (HomeConnection.get(context).state.value.address == null || selected.isBlank()) return
         val session = try {
-            withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), address).activeSession() }
+            withContext(Dispatchers.IO) { HomeConnection.get(context).client().activeSession() }
         } catch (error: CancellationException) { throw error }
         catch (_: Exception) { return }
         if (session == null || !session.canJoin(selected) || state.value.active) return
@@ -93,13 +97,18 @@ class PlaybackService : Service() {
     private var stopped = false
     private var ownsTransport = false
     private var resumeRecovery = ResumeRecovery()
+    private var localVideo: LocalVideoSession? = null
+    private val mutablePlayer = MutableStateFlow<androidx.media3.common.Player?>(null)
+    inner class LocalBinder : android.os.Binder() {
+        val player get() = mutablePlayer.asStateFlow()
+    }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder = LocalBinder()
 
     override fun onCreate() {
         super.onCreate()
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel("tv-playback", "TV playback", NotificationManager.IMPORTANCE_LOW))
+            NotificationChannel("tv-playback", "Movie playback", NotificationManager.IMPORTANCE_LOW))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -114,22 +123,34 @@ class PlaybackService : Service() {
                 resumeRecovery = ResumeRecovery()
                 pcPlayback = null
                 source = null
-                Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing TV playback...")
+                val requested = intent.getStringExtra("destination")?.let { PlaybackDestination.valueOf(it) } ?: PlaybackDestination.TV
+                val initialDestination = if (intent.action == "attach-pc" || intent.getBooleanExtra("from-pc", false)) PlaybackDestination.TV else requested
+                Playback.pendingDevicePlay.set(initialDestination != PlaybackDestination.TV)
+                Playback.mutableState.value = CastState(true, currentId, intent.getStringExtra("title").orEmpty(), "Preparing playback…",
+                    destination = initialDestination, sessionId = java.util.UUID.randomUUID().toString())
                 foreground(intent.action != "attach-pc")
                 playback = scope.launch {
                     try {
                         withTimeout(6 * 60 * 60 * 1000L) {
                             if (intent.action == "attach-pc") attachPc(intent)
                             else if (intent.getBooleanExtra("from-pc", false)) castFromPc(intent)
-                            else cast(intent)
+                            else {
+                                val home = HomeConnection.get(this@PlaybackService)
+                                val target = if (requested == PlaybackDestination.AUTO) {
+                                    home.refresh(force = true)
+                                    home.state.value.destination
+                                } else requested
+                                Playback.mutableState.value = Playback.state.value.copy(destination = target)
+                                if (target == PlaybackDestination.DEVICE) playOnDevice(intent) else cast(intent)
+                            }
                         }
                     } catch (error: TimeoutCancellationException) {
                         update("Playback session timed out. Open Movie World to retry.")
                     } catch (error: CancellationException) {
                         update(if (stopped) "Stopped" else "Playback session ended")
                     } catch (error: Exception) {
-                        OperationLog.record(this@PlaybackService, "playback", error.message ?: "TV playback failed", "error", currentId)
-                        update(error.message ?: "TV playback failed")
+                        OperationLog.record(this@PlaybackService, "playback", error.message ?: "Playback failed", "error", currentId)
+                        update(error.message ?: "Playback failed")
                     } finally {
                         withContext(NonCancellable) {
                             commands.withLock {
@@ -158,6 +179,20 @@ class PlaybackService : Service() {
             "pause", "resume", "seek" -> scope.launch {
                 commands.withLock {
                     if (!Playback.state.value.active || !Playback.state.value.controllable) return@withLock
+                    if (localVideo != null) {
+                        withContext(Dispatchers.Main.immediate) {
+                            localVideo?.player?.let { player ->
+                                when (intent.action) {
+                                    "pause" -> player.pause()
+                                    "resume" -> player.play()
+                                    "seek" -> player.seekTo(intent.getLongExtra("seconds", 0).coerceAtLeast(0) * 1000)
+                                }
+                            }
+                        }
+                        saveLocalProgress(flush = true)
+                        foreground(false)
+                        return@withLock
+                    }
                     pcPlayback?.let { pc ->
                         try {
                             pc.control(intent.action!!, intent.getLongExtra("seconds", 0).coerceAtLeast(0))
@@ -228,7 +263,7 @@ class PlaybackService : Service() {
             .setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setContentIntent(pending).setOngoing(true).setOnlyAlertOnce(true)
-        if (state.controllable) {
+        if (state.controllable && (state.destination != PlaybackDestination.DEVICE || state.playing)) {
             val action = if (state.playing) "pause" else "resume"
             val control = PendingIntent.getService(this, if (state.playing) 2 else 3,
                 Intent(this, PlaybackService::class.java).setAction(action),
@@ -240,8 +275,9 @@ class PlaybackService : Service() {
         val notification = builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop).build()
         var type = 0
         if (Build.VERSION.SDK_INT >= 29) {
-            type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            if (downloading) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            type = if (downloading) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                else if (state.destination == PlaybackDestination.DEVICE) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                else ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         }
         ServiceCompat.startForeground(this, 42, notification, type)
     }
@@ -249,6 +285,100 @@ class PlaybackService : Service() {
     private fun update(message: String) {
         if (message != Playback.state.value.message) OperationLog.record(this, "playback", message, movieId = currentId)
         Playback.mutableState.value = Playback.state.value.copy(message = message)
+    }
+
+    private val localProgressLock = Mutex()
+    private suspend fun saveLocalProgress(flush: Boolean = false) = localProgressLock.withLock {
+        val state = withContext(Dispatchers.Main.immediate) {
+            localVideo?.snapshot(Playback.state.value)
+        } ?: return@withLock
+        Playback.mutableState.value = state
+        if (!state.controllable) return@withLock
+        val db = PlaybackDatabase.get(this).access()
+        db.save(PlaybackDatabase.Progress().apply {
+            movieId = currentId
+            position = state.position
+            duration = state.duration
+            updated = maxOf(System.currentTimeMillis(), (db.find(currentId)?.updated ?: 0) + 1)
+            finished = state.message == "Playback ended" || (duration > 0 && position >= duration - 30)
+            dirty = true
+        })
+        Playback.revision.value += 1
+        SyncHooks.schedule(if (flush || !state.playing) 0 else 1500)
+    }
+
+    private suspend fun playOnDevice(intent: Intent) {
+        val db = PlaybackDatabase.get(this).access()
+        val previous = db.find(currentId)
+        val saved = if (!restart && previous != null && !previous.finished &&
+            (previous.duration == 0L || previous.position < previous.duration - 30)) previous.position else 0
+        Playback.mutableState.value = Playback.state.value.copy(position = saved)
+        var captions: File? = null
+        var played = false
+        try {
+            val local = intent.getStringExtra("local")
+            val uri = if (local != null) {
+                android.net.Uri.parse(local).also {
+                    require(it.scheme == "content") { "Choose a video from the Android file picker." }
+                    require(contentResolver.getType(it)?.startsWith("video/") != false) { "Choose a video file." }
+                }
+            } else {
+                val tg = TelegramSource.get(this).also { source = it; it.start() }
+                update("Finding movie in Telegram…")
+                val resolved = tg.resolve(intent.getStringExtra("telegram") ?: error("Telegram link unavailable"),
+                    intent.getStringExtra("title"))
+                tg.protectMovie(resolved)
+                val media = tg.prepare(resolved)
+                val file = if (media.file.local.isDownloadingCompleted && File(media.file.local.path).isFile) {
+                    File(media.file.local.path)
+                } else {
+                    update("Downloading movie to this device…")
+                    foreground(true)
+                    tg.download(media) { bytes, total ->
+                        val suffix = if (total > 0) "${bytes * 100 / total}%" else "${bytes / (1024 * 1024)} MB"
+                        update("Downloading $suffix")
+                        foreground(true)
+                    }
+                }
+                check(file.length() > 0) { "The video is empty." }
+                android.net.Uri.fromFile(file)
+            }
+            val srt = pcSubtitles(intent)
+            if (srt != null) {
+                captions = File.createTempFile("device-subtitles-", ".srt", cacheDir).apply { writeText(srt, Charsets.UTF_8) }
+            }
+            currentCoroutineContext().ensureActive()
+            withContext(Dispatchers.Main.immediate) {
+                localVideo = LocalVideoSession(this@PlaybackService, uri, captions,
+                    Playback.state.value.title, saved) {
+                    scope.launch { saveLocalProgress(flush = true) }
+                }
+                mutablePlayer.value = localVideo!!.player
+            }
+            foreground(false)
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                saveLocalProgress()
+                if (Playback.state.value.controllable) {
+                    played = true
+                    source?.recordMoviePlayback()
+                }
+                foreground(false)
+                if (localVideo!!.ended.isCompleted) break
+                delay(1000)
+            }
+        } finally {
+            withContext(NonCancellable) {
+                saveLocalProgress(flush = true)
+                withContext(Dispatchers.Main.immediate) {
+                    mutablePlayer.value = null
+                    localVideo?.close()
+                    localVideo = null
+                }
+                source?.releaseMovie(played)
+            }
+            captions?.delete()
+        }
     }
 
     private suspend fun cast(intent: Intent) {
@@ -273,11 +403,10 @@ class PlaybackService : Service() {
         val cachedSubtitles = subtitleCache(this)
         val hasCachedSubtitle = cachedSubtitles.get(subtitleKey)?.enabled == true
         if (local == null) {
-            val pcAddress = prefs.getString("pc-server", "").orEmpty()
-            if (pcAddress.isNotBlank()) {
+            if (HomeConnection.get(this).state.value.address != null) {
                 update("Checking PC for a saved movie...")
                 val pc = try {
-                    PcPlayback(net, pcAddress).takeIf { it.cached(currentId, tv.id) }
+                    HomeConnection.get(this).client().takeIf { it.cached(currentId, tv.id) }
                 } catch (error: CancellationException) { throw error }
                 catch (_: Exception) { null }
                 currentCoroutineContext().ensureActive()
@@ -493,17 +622,16 @@ class PlaybackService : Service() {
                 if (subtitleCache(this).prepareForPlayback(key, temporary)) temporary.readText(Charsets.UTF_8) else null
             } finally { temporary.delete() }
         }
-        if (srt != null) update("Sending subtitles to PC...")
+        if (srt != null && Playback.state.value.destination == PlaybackDestination.TV) update("Sending subtitles to PC...")
         return srt
     }
 
     private suspend fun castFromPc(intent: Intent) {
         val prefs = getSharedPreferences("tv", MODE_PRIVATE)
-        val address = prefs.getString("pc-server", "").orEmpty()
         val selected = prefs.getString("renderer-id", "").orEmpty()
-        check(address.isNotBlank()) { "Set up your home PC in TV settings first." }
         check(selected.isNotBlank()) { "Choose a TV in TV settings first." }
-        val pc = PcPlayback(TvNetwork(this), address)
+        HomeConnection.get(this).refresh()
+        val pc = HomeConnection.get(this).client()
         update("Checking PC and TV...")
         pc.prepare(currentId, selected)
         wake = getSystemService(PowerManager::class.java).newWakeLock(
@@ -594,7 +722,7 @@ class PlaybackService : Service() {
 
     private suspend fun attachPc(intent: Intent) {
         val prefs = getSharedPreferences("tv", MODE_PRIVATE)
-        val pc = PcPlayback(TvNetwork(this), prefs.getString("pc-server", "").orEmpty())
+        val pc = HomeConnection.get(this).client()
         val job = pc.attach(intent.getStringExtra("job").orEmpty(),
             prefs.getString("renderer-id", "").orEmpty())
         if (job == null) { update("Playback ended"); return }

@@ -72,6 +72,7 @@ fun HomeScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, contentPadding:
     val cast by Playback.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val messages = LocalMessages.current
+    val home by graph.home.state.collectAsStateWithLifecycle()
     HomeContent(
         state = state,
         favourites = favourites,
@@ -82,11 +83,12 @@ fun HomeScreen(onOpen: (String) -> Unit, onSettings: () -> Unit, contentPadding:
             try {
                 Playback.start(context, featured.movie, featured.telegram, restart = false)
             } catch (failure: Exception) {
-                messages(failure.message ?: "Cannot start TV playback")
+                messages(failure.message ?: "Cannot start playback")
             }
         },
         onSettings = onSettings,
         contentPadding = contentPadding,
+        destination = home.destination,
     )
 }
 
@@ -100,6 +102,7 @@ fun HomeContent(
     onPlayFeatured: (Featured) -> Unit,
     onSettings: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
+    destination: com.movieworld.android.PlaybackDestination = com.movieworld.android.PlaybackDestination.TV,
 ) {
     val listState = rememberLazyListState()
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 200 } }
@@ -117,6 +120,7 @@ fun HomeContent(
                     resume = state.featuredResume,
                     inList = state.featured?.movie?.id in favourites,
                     castActive = cast.active,
+                    destination = destination,
                     onOpen = onOpen,
                     onPlay = onPlayFeatured,
                     onToggleList = onToggleFavourite,
@@ -184,6 +188,7 @@ private fun Hero(
     resume: Long,
     inList: Boolean,
     castActive: Boolean,
+    destination: com.movieworld.android.PlaybackDestination,
     onOpen: (String) -> Unit,
     onPlay: (Featured) -> Unit,
     onToggleList: (String) -> Unit,
@@ -218,18 +223,18 @@ private fun Hero(
                 Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(Dimens.lg))
-                Row(horizontalArrangement = Arrangement.spacedBy(Dimens.md)) {
-                    PrimaryButton(
-                        text = playLabel(resume), onClick = { onPlay(featured) }, icon = Icons.Filled.PlayArrow,
-                        enabled = !castActive, modifier = Modifier.weight(1.4f),
-                    )
+                PrimaryButton(
+                    text = playLabel(resume, destination), onClick = { onPlay(featured) }, icon = Icons.Filled.PlayArrow,
+                    enabled = !castActive, modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(Dimens.sm))
+                Row(horizontalArrangement = Arrangement.spacedBy(Dimens.md), verticalAlignment = Alignment.CenterVertically) {
                     SecondaryButton(
                         text = "My List", onClick = { onToggleList(movie.id) },
                         icon = if (inList) Icons.Filled.Check else Icons.Filled.Add, modifier = Modifier.weight(1f),
                     )
+                    Box(Modifier.weight(1f)) { SecondaryButtonText(text = "Details", onClick = { onOpen(movie.id) }) }
                 }
-                Spacer(Modifier.height(Dimens.sm))
-                SecondaryButtonText(text = "Details", onClick = { onOpen(movie.id) })
             }
         }
     }

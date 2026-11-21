@@ -63,6 +63,8 @@ import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.movieworld.android.safeSetupError
 import com.movieworld.android.PcPlayback
+import com.movieworld.android.HomeConnection
+import com.movieworld.android.HomePc
 import com.movieworld.android.Playback
 import com.movieworld.android.Renderer
 import com.movieworld.android.TelegramSource
@@ -94,6 +96,8 @@ fun TvSettingsScreen(onBack: () -> Unit) {
     val telegram by source.state.collectAsStateWithLifecycle()
     val playback by Playback.state.collectAsStateWithLifecycle()
     val prefs = remember { context.getSharedPreferences("tv", Context.MODE_PRIVATE) }
+    val home = remember { HomeConnection.get(context) }
+    val connection by home.state.collectAsStateWithLifecycle()
     var address by rememberSaveable { mutableStateOf(prefs.getString("description", "").orEmpty()) }
     var pcAddress by rememberSaveable { mutableStateOf(prefs.getString("pc-server", "").orEmpty()) }
     var pcSaved by remember { mutableStateOf(prefs.getString("pc-server", "").orEmpty()) }
@@ -182,12 +186,21 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                 SubtitleSetup()
             }
             item(key = "whisper") {
-                WhisperSetup(pcSaved)
+                WhisperSetup(connection.address.orEmpty())
             }
             item(key = "pc") {
                 SettingsCard(title = "Home PC", icon = AppIcons.Tv,
-                    connected = pcSaved.isNotBlank(), status = if (pcSaved.isBlank()) "Optional" else pcSaved) {
-                    Text("Before downloading, check your PC for a saved copy. If found, the PC streams to the TV and saves your progress. Otherwise, this phone downloads and streams as usual.")
+                    connected = connection.address != null, status = connection.message) {
+                    Text("On Wi-Fi, Movie World finds your home PC automatically. When the PC and selected TV are available, Play uses the TV and prefers the PC's saved movie. Away from home, Play opens the video on this device.")
+                    connection.address?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    SecondaryButton("Find home PC", enabled = !busy && !connection.searching, modifier = Modifier.fillMaxWidth(), onClick = {
+                        home.enableDiscovery()
+                    })
+                    connection.candidates.forEach { pc ->
+                        TextButton(enabled = !busy && !playback.active, onClick = { runWork { home.choose(pc) } }) {
+                            Text("Use ${pc.name} · ${pc.address}")
+                        }
+                    }
                     Spacer(Modifier.height(Dimens.md))
                     OutlinedTextField(pcAddress, { pcAddress = it }, Modifier.fillMaxWidth(),
                         label = { Text("PC server address") }, placeholder = { Text("http://192.168.1.10") },
@@ -197,14 +210,13 @@ fun TvSettingsScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(), onClick = {
                             runWork {
                                 val value = pcAddress.trim().trimEnd('/')
-                                withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), value).check() }
-                                prefs.edit { putString("pc-server", value) }
+                                home.choose(HomePc("Home PC", value))
                                 pcAddress = value
                                 pcSaved = value
                             }
                         })
-                    if (pcSaved.isNotBlank()) TextButton(enabled = !busy && !playback.active, onClick = {
-                        prefs.edit { remove("pc-server") }
+                    if (connection.address != null || pcSaved.isNotBlank()) TextButton(enabled = !busy && !playback.active, onClick = {
+                        home.usePhoneOnly()
                         pcSaved = ""
                         pcAddress = ""
                     }) { Text("Use phone only") }
@@ -213,7 +225,7 @@ fun TvSettingsScreen(onBack: () -> Unit) {
             item(key = "account") {
                 SettingsCard(title = "Personal data sync", icon = AppIcons.Bookmark,
                     connected = account.signedIn, status = account.status) {
-                    Text("Favourites, resume points and watch history sync through JSON files in your Telegram Saved Messages. Connect Telegram below. Your PC/browser still uses Supabase and does not receive these changes.")
+                    Text("Favourites, resume points and watch history sync through your Telegram Saved Messages, including over mobile data. Use the same Telegram account on your phone and PC.")
                     Text("Files use ordinary Telegram cloud storage. Credentials, downloads and TV settings are excluded.", style = MaterialTheme.typography.bodySmall)
                     if (account.lastSync > 0) Text("Last sync: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(account.lastSync))}")
                     if (account.pending) Text("Changes pending sync")

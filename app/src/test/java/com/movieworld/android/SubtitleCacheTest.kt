@@ -6,6 +6,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SubtitleCacheTest {
+    @Test fun automaticPcSyncPreservesAnExistingDisabledSubtitleAndTiming() = cache { root ->
+        val store = SubtitleCache(root)
+        store.save("film", srt.byteInputStream(), "My release", "fr")
+        store.configure("film", enabled = false, delayMs = 1500)
+        val selected = store.saveIfAbsent("film", srt.replace("world", "PC").byteInputStream(), "PC", "en")
+        assertEquals("My release", selected.label)
+        assertFalse(selected.enabled)
+        assertEquals(1500, selected.delayMs)
+        assertTrue(selected.file.readText().contains("world"))
+    }
     private val srt = "1\n00:00:01,000 --> 00:00:02,000\nHello world\n"
     private fun <T> cache(block: (File) -> T): T {
         val root = Files.createTempDirectory("movie-subtitles-test").toFile()

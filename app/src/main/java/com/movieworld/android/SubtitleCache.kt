@@ -17,7 +17,10 @@ internal fun subtitleSourceKey(movieId: String, telegram: String?) = "$movieId\n
 /** Discardable app cache; atomic manifests point to validated, immutable SRT files. */
 internal class SubtitleCache(private val directory: File, private val maxBytes: Long = 20L * 1024 * 1024,
     private val maxEntries: Int = 100) {
-    companion object { private val lock = Any() }
+    companion object {
+        private val lock = Any()
+        val revision = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    }
     private fun key(source: String) = MessageDigest.getInstance("SHA-256").digest(source.toByteArray())
         .joinToString("") { "%02x".format(it) }
     private fun manifest(source: String) = File(directory, "${key(source)}.properties")
@@ -63,6 +66,7 @@ internal class SubtitleCache(private val directory: File, private val maxBytes: 
         } catch (error: Exception) { target.delete(); throw error }
         old?.delete()
         prune(file)
+        revision.value += 1
         requireNotNull(get(source))
     }
     fun configure(source: String, enabled: Boolean? = null, delayMs: Int? = null): CachedSubtitle? = synchronized(lock) {
@@ -71,7 +75,11 @@ internal class SubtitleCache(private val directory: File, private val maxBytes: 
         if (enabled != null) props.setProperty("enabled", enabled.toString())
         if (delayMs != null) props.setProperty("delay", delayMs.coerceIn(-30000, 30000).toString())
         writeManifest(file, props)
+        revision.value += 1
         get(source)
+    }
+    fun saveIfAbsent(source: String, input: InputStream, label: String, language: String): CachedSubtitle = synchronized(lock) {
+        get(source) ?: save(source, input, label, language)
     }
     /** Copy while holding the cache lock so replacement/eviction cannot race a new cast. */
     fun prepareForPlayback(source: String, destination: File): Boolean = synchronized(lock) {

@@ -52,6 +52,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.movieworld.android.Playback
+import com.movieworld.android.PlaybackDestination
+import com.movieworld.android.HomeSync
+import com.movieworld.android.ui.player.DevicePlayer
+import com.movieworld.android.ui.player.DevicePlayerPresentation
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.detail.DetailScreen
 import com.movieworld.android.ui.history.HistoryScreen
@@ -106,7 +110,9 @@ fun MovieWorldApp(graph: AppGraph) {
     val cast by Playback.state.collectAsStateWithLifecycle()
     val phase = cast.phase()
     var dismissedMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    val showPlayer = route != Routes.SETTINGS && phase != PlaybackPhase.Idle && (cast.active || dismissedMessage != cast.message)
+    val devicePlayer = rememberSaveable(saver = DevicePlayerPresentation.Saver) { DevicePlayerPresentation() }
+    val showPlayer = route != Routes.SETTINGS && phase != PlaybackPhase.Idle &&
+        (cast.active || dismissedMessage != cast.message) && devicePlayer.showMiniPlayer(cast)
     var expanded by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     var poster by remember { mutableStateOf<String?>(null) }
@@ -114,11 +120,29 @@ fun MovieWorldApp(graph: AppGraph) {
         poster = cast.movieId?.let { id -> withContext(Dispatchers.IO) { catalogueResult { graph.catalogue.movie(id)?.poster } } }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(cast.sessionId, cast.active, cast.destination) {
+        devicePlayer.observe(cast)
+    }
     LaunchedEffect(lifecycleOwner, context) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
+                graph.home.refresh()
                 Playback.observePc(context)
                 delay(3000)
+            }
+        }
+    }
+    LaunchedEffect(lifecycleOwner, graph) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                graph.home.refresh()
+                if (graph.home.state.value.address != null) {
+                    HomeSync.captions(context)
+                    withContext(Dispatchers.IO) {
+                        com.movieworld.android.OperationLog.schedule(context)
+                    }
+                }
+                delay(60_000)
             }
         }
     }
@@ -140,9 +164,15 @@ fun MovieWorldApp(graph: AppGraph) {
                     AnimatedVisibility(showPlayer, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                         MiniPlayer(
                             state = cast, poster = poster,
-                            onExpand = { expanded = true },
-                            onPlayPause = { Playback.control(context, if (cast.playing) "pause" else "resume") },
-                            onStop = { Playback.control(context, "stop") },
+                            onExpand = { if (cast.destination == PlaybackDestination.DEVICE) devicePlayer.open(cast) else expanded = true },
+                            onPlayPause = {
+                                if (cast.destination == PlaybackDestination.DEVICE) devicePlayer.open(cast)
+                                Playback.control(context, if (cast.playing) "pause" else "resume")
+                            },
+                            onStop = {
+                                if (cast.destination == PlaybackDestination.DEVICE) devicePlayer.stop(cast)
+                                Playback.control(context, "stop")
+                            },
                             onDismiss = { dismissedMessage = cast.message },
                             modifier = if (showTabs) Modifier else Modifier.background(Surface2).navigationBarsPadding(),
                         )
@@ -185,7 +215,10 @@ fun MovieWorldApp(graph: AppGraph) {
             }
         }
     }
-    if (expanded && phase != PlaybackPhase.Idle) {
+    if (devicePlayer.expanded && cast.active && cast.destination == PlaybackDestination.DEVICE) {
+        DevicePlayer(state = cast, onDismiss = devicePlayer::close)
+    }
+    if (expanded && cast.destination != PlaybackDestination.DEVICE && phase != PlaybackPhase.Idle) {
         PlayerSheet(
             state = cast, poster = poster,
             onPlayPause = { Playback.control(context, if (cast.playing) "pause" else "resume") },

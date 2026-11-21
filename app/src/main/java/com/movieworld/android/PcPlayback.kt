@@ -49,7 +49,7 @@ class PcPlayback(private val net: TvNetwork, address: String) {
                 OperationLog.record(net.appContext, "pc-command", "Command accepted: ${path.substringBefore('?')}", movieId = body.optString("movie_id", ""))
             return result
         } catch (failure: Exception) {
-            if (!path.startsWith("/api/operations")) OperationLog.record(net.appContext, "pc-command", "${path.substringBefore('?')}: ${failure.message ?: "Request failed"}", "error", body?.optString("movie_id", "").orEmpty())
+            if (!path.startsWith("/api/operations") && path != "/api/tv/session") OperationLog.record(net.appContext, "pc-command", "${path.substringBefore('?')}: ${failure.message ?: "Request failed"}", "error", body?.optString("movie_id", "").orEmpty())
             throw failure
         } finally { connection.disconnect() }
     }
@@ -60,8 +60,8 @@ class PcPlayback(private val net: TvNetwork, address: String) {
     fun operations(): JSONObject = request("/api/operations", timeout = 10000)
     fun uploadOperations(events: org.json.JSONArray): JSONObject = request("/api/operations", JSONObject().put("events", events), timeout = 10000)
 
-    fun check() {
-        check(request("/api/tv/session").optBoolean("enabled")) { "Enable TV playback on the PC server first." }
+    fun check(timeout: Int = 3000) {
+        check(request("/api/tv/session", timeout = timeout).optBoolean("enabled")) { "Enable TV playback on the PC server first." }
     }
 
     fun prepareFavourite(movieId: String) = request("/api/playback/prepare", JSONObject().put("movie_id", movieId.toInt()))
