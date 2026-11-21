@@ -83,6 +83,10 @@ TV codec compatibility still needs testing on the Samsung RU7100. Unsupported fi
 
 ## Development and verification
 
+Connected tests are configured to leave the installed APK and its data in place
+after the run. Prefer a test device or emulator. Before testing on a personal
+phone, preserve its app data; uninstalling the app clears local setup and caches.
+
 The sibling ../movie-world repository is the read-only reference for web UI behavior, catalogue queries, and Samsung playback. See docs/android-port-plan.md.
 
 From the repository root in PowerShell, run the following commands.
