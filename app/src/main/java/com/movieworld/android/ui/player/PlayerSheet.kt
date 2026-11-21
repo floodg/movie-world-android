@@ -60,6 +60,7 @@ fun PlayerSheet(
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val phase = state.phase()
+    val target = com.movieworld.android.destinationLabel(state.destination)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, shape = SheetShape,
         containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         Column(Modifier.fillMaxWidth().padding(horizontal = Dimens.xl).navigationBarsPadding().padding(bottom = Dimens.xl)) {
@@ -69,9 +70,9 @@ fun PlayerSheet(
                 }
                 Spacer(Modifier.width(Dimens.lg))
                 Column(Modifier.weight(1f)) {
-                    Text("NOW ON TV", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("NOW ON ${target.uppercase()}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(Dimens.xs))
-                    Text(state.title.ifBlank { "TV playback" }, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(state.title.ifBlank { "Movie playback" }, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(Dimens.xs))
                     Text(state.message, style = MaterialTheme.typography.bodyMedium, color = phaseColor(phase))
                     state.warning?.let {
@@ -101,7 +102,7 @@ fun PlayerSheet(
                             contentDescription = if (state.playing) "Pause" else "Resume", Modifier.size(36.dp))
                     }
                     IconButton(onClick = onStop, Modifier.size(56.dp)) {
-                        Icon(AppIcons.Stop, contentDescription = "Stop TV", Modifier.size(28.dp))
+                        Icon(AppIcons.Stop, contentDescription = "Stop $target", Modifier.size(28.dp))
                     }
                 }
             } else {
@@ -111,7 +112,7 @@ fun PlayerSheet(
                     SecondaryButton("Cancel", onClick = onStop, icon = AppIcons.Stop, modifier = Modifier.fillMaxWidth())
                 } else {
                     Text(
-                        if (phase == PlaybackPhase.Error) "Open the movie and try again, or check TV settings." else "This TV session has finished.",
+                        if (phase == PlaybackPhase.Error) "Open the movie and try again." else "This playback session has finished.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                     )

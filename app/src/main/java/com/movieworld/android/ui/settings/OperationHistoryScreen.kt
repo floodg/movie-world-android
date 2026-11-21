@@ -35,8 +35,7 @@ internal fun OperationHistoryScreen(onBack: () -> Unit) {
                 events = withContext(Dispatchers.IO) { OperationLog.rows(context) }
                 val remote = withContext(Dispatchers.IO) {
                     OperationLog.sync(context)
-                    val address = context.getSharedPreferences("tv", Context.MODE_PRIVATE).getString("pc-server", "").orEmpty()
-                    val rows = PcPlayback(TvNetwork(context), address).operations().getJSONArray("events")
+                    val rows = HomeConnection.get(context).client().operations().getJSONArray("events")
                     (0 until rows.length()).map { rows.getJSONObject(it) }
                 }
                 events = (events + remote).distinctBy { it.getString("event_id") }.sortedByDescending { it.getLong("timestamp") }

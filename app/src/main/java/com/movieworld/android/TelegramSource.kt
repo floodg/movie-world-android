@@ -346,7 +346,7 @@ class TelegramSource private constructor(private val context: Context) {
             while (!file.local.isDownloadingCompleted) {
                 currentCoroutineContext().ensureActive()
                 progress(file.local.downloadedSize, maxOf(file.size, file.expectedSize))
-                check(file.local.isDownloadingActive) { "Telegram download stopped. Tap Play on TV to retry." }
+                check(file.local.isDownloadingActive) { "Telegram download stopped. Tap Play to retry." }
                 delay(1_000)
                 file = request(TdApi.GetFile(file.id))
             }

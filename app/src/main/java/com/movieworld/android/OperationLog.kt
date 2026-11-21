@@ -61,9 +61,9 @@ internal object OperationLog {
             PeriodicWorkRequestBuilder<OperationSyncWorker>(15, TimeUnit.MINUTES).setConstraints(constraints).build())
     }
     fun sync(context: Context) {
-        val address = context.getSharedPreferences("tv", Context.MODE_PRIVATE).getString("pc-server", "").orEmpty()
-        check(address.isNotBlank()) { "Save a PC server address in TV settings to see server logs." }
-        val pc = PcPlayback(TvNetwork(context), address)
+        val home = HomeConnection.get(context)
+        kotlinx.coroutines.runBlocking { home.refresh() }
+        val pc = home.client()
         repeat(40) {
             val rows = rows(context, pending = true)
             if (rows.isEmpty()) return

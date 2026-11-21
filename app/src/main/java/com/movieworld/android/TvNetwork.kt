@@ -36,12 +36,12 @@ class TvNetwork(context: Context) {
         return parsed
     }
 
-    fun http(url: String, action: String? = null, body: String? = null): String {
+    fun http(url: String, action: String? = null, body: String? = null, timeout: Int = 6000): String {
         val connection = network.openConnection(validate(url)) as HttpURLConnection
         try {
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 6_000
-            connection.readTimeout = 6_000
+            connection.connectTimeout = timeout
+            connection.readTimeout = timeout
             if (body != null) {
                 connection.requestMethod = "POST"
                 connection.doOutput = true
@@ -68,8 +68,8 @@ class TvNetwork(context: Context) {
         } finally { connection.disconnect() }
     }
 
-    fun renderer(description: String): Renderer {
-        val document = xml(http(description))
+    fun renderer(description: String, timeout: Int = 6000): Renderer {
+        val document = xml(http(description, timeout = timeout))
         val service = document.getElementsByTagNameNS("*", "service").let { nodes ->
             (0 until nodes.length).map { nodes.item(it) as Element }
                 .firstOrNull { it.text("serviceType").startsWith("urn:schemas-upnp-org:service:AVTransport:") }

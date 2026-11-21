@@ -34,8 +34,8 @@ class UiStateTest {
     @Test fun resumeLabelAndPositionMatchOriginalRules() {
         assertEquals("Play on TV", playLabel(0))
         assertEquals("Play on TV", playLabel(14))
-        assertEquals("Resume · 00:00:15", playLabel(15))
-        assertEquals("Resume · 01:02:03", playLabel(3723))
+        assertEquals("Resume on TV · 00:00:15", playLabel(15))
+        assertEquals("Resume on TV · 01:02:03", playLabel(3723))
         assertEquals(0L, resumePosition(null))
         val progress = PlaybackDatabase.Progress().apply { movieId = "m"; position = 300; duration = 7200 }
         assertEquals(300L, resumePosition(progress))

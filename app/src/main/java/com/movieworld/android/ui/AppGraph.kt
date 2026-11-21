@@ -13,6 +13,7 @@ class AppGraph(context: Context, val openTelegram: (String) -> Unit) {
     val catalogue = Catalogue(app)
     val favourites = Favourites.get(app)
     val cloud = CloudSync.get(app)
+    val home = com.movieworld.android.HomeConnection.get(app)
     val progress: PlaybackDatabase.Access by lazy { PlaybackDatabase.get(app).access() }
 }
 
@@ -28,7 +29,10 @@ fun watchedFraction(progress: PlaybackDatabase.Progress): Float? =
     if (progress.duration > 0) (progress.position.toFloat() / progress.duration).coerceIn(0f, 1f) else null
 
 /** Label for the primary playback action on the detail screen. */
-fun playLabel(resume: Long): String = if (resume >= 15) "Resume · ${com.movieworld.android.formatTime(resume)}" else "Play on TV"
+fun playLabel(resume: Long, destination: com.movieworld.android.PlaybackDestination = com.movieworld.android.PlaybackDestination.TV): String {
+    val target = com.movieworld.android.destinationLabel(destination)
+    return if (resume >= 15) "Resume on $target · ${com.movieworld.android.formatTime(resume)}" else "Play on $target"
+}
 
 inline fun <T> catalogueResult(block: () -> T): T? = try {
     block()

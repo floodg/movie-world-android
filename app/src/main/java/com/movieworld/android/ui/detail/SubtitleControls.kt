@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.movieworld.android.*
 import com.movieworld.android.ui.settings.SubtitleSetup
 import kotlinx.coroutines.*
@@ -31,7 +32,8 @@ private fun SubtitleControlsForSource(movie: Movie, source: String, enabled: Boo
     var error by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<SubtitleMatch>?>(null) }
     var setup by remember { mutableStateOf(false) }
-    LaunchedEffect(source) { selected = withContext(Dispatchers.IO) { cache.get(source) } }
+    val cacheRevision by SubtitleCache.revision.collectAsStateWithLifecycle()
+    LaunchedEffect(source, cacheRevision) { selected = withContext(Dispatchers.IO) { cache.get(source) } }
     LaunchedEffect(busy) { onBusy(busy) }
     DisposableEffect(Unit) { onDispose { onBusy(false) } }
     fun work(block: suspend () -> Unit) {
@@ -75,9 +77,9 @@ private fun SubtitleControlsForSource(movie: Movie, source: String, enabled: Boo
             TextButton(enabled = enabled && !busy, onClick = {
                 work {
                     selected = withContext(Dispatchers.IO) {
-                        val address = context.getSharedPreferences("tv", android.content.Context.MODE_PRIVATE).getString("pc-server", "").orEmpty()
-                        require(address.isNotBlank()) { "Set the PC server address in TV settings first." }
-                        val srt = PcPlayback(TvNetwork(context), address).captions(movie.id)
+                        val home = HomeConnection.get(context)
+                        home.refresh()
+                        val srt = home.client().captions(movie.id)
                             ?: error("PC captions are not ready yet. The movie must finish downloading and generating captions.")
                         srt.byteInputStream().use { cache.save(source, it, "Whisper · PC captions", "en") }
                     }
@@ -98,7 +100,7 @@ private fun SubtitleControlsForSource(movie: Movie, source: String, enabled: Boo
                     work { selected = withContext(Dispatchers.IO) { cache.configure(source, delayMs = current.delayMs + 500) } }
                 }) { Text("0.5s later") }
             }
-            Text("Play sends these subtitles and timing to the PC when the movie is there; otherwise the phone serves them. Stop playback to change them.", style = MaterialTheme.typography.bodySmall)
+            Text("Play sends these subtitles and timing to the PC when the movie is there; otherwise they are used on this device or served to the TV by the phone. Stop playback to change timing.", style = MaterialTheme.typography.bodySmall)
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         if (!enabled) Text("Subtitle changes are available before playback.", style = MaterialTheme.typography.bodySmall)

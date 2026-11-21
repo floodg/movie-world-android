@@ -10,10 +10,10 @@ class FavouritePreparationWorker(context: Context, params: WorkerParameters) : W
         val id = inputData.getString("movie") ?: return Result.failure()
         val row = PlaybackDatabase.get(applicationContext).access().findFavourite(id)
         if (row == null || row.removed != null) return Result.success()
-        val address = applicationContext.getSharedPreferences("tv", Context.MODE_PRIVATE).getString("pc-server", "").orEmpty()
-        if (address.isBlank()) return Result.retry()
         return try {
-            PcPlayback(TvNetwork(applicationContext), address).prepareFavourite(id)
+            val home = HomeConnection.get(applicationContext)
+            kotlinx.coroutines.runBlocking { home.refresh() }
+            home.client().prepareFavourite(id)
             OperationLog.record(applicationContext, "preparation", "PC accepted background movie preparation", movieId = id)
             Result.success()
         } catch (failure: PcPlaybackError) {

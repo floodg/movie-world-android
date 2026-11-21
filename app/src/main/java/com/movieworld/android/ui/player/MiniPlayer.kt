@@ -51,10 +51,11 @@ fun MiniPlayer(
 ) {
     val phase = state.phase()
     val tone = phaseColor(phase)
+    val target = com.movieworld.android.destinationLabel(state.destination)
     Column(
         modifier.fillMaxWidth().background(Surface2)
-            .clickable(onClickLabel = "Open TV playback controls", onClick = onExpand)
-            .semantics { contentDescription = "Now playing on TV: ${state.title}. ${state.message}" },
+            .clickable(onClickLabel = "Open playback on $target", onClick = onExpand)
+            .semantics { contentDescription = "Now playing on $target: ${state.title}. ${state.message}" },
     ) {
         Row(
             Modifier.fillMaxWidth().padding(start = Dimens.md, end = Dimens.xs, top = Dimens.sm, bottom = Dimens.sm),
@@ -64,7 +65,7 @@ fun MiniPlayer(
                 RemoteImage(poster, null, Modifier.fillMaxSize(), placeholderLabel = null, iconSize = 16)
             }
             Column(Modifier.weight(1f).padding(horizontal = Dimens.md)) {
-                Text(state.title.ifBlank { "TV playback" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(state.title.ifBlank { "Movie playback" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     state.warning ?: state.message, style = MaterialTheme.typography.bodySmall,
                     color = if (state.warning != null) MaterialTheme.colorScheme.primary else tone,
@@ -79,7 +80,7 @@ fun MiniPlayer(
             }
             if (state.active) {
                 IconButton(onClick = onStop, Modifier.size(Dimens.touchTarget)) {
-                    Icon(AppIcons.Stop, contentDescription = if (state.controllable) "Stop TV" else "Cancel")
+                    Icon(AppIcons.Stop, contentDescription = if (state.controllable) "Stop $target" else "Cancel")
                 }
             } else {
                 IconButton(onClick = onDismiss, Modifier.size(Dimens.touchTarget)) {

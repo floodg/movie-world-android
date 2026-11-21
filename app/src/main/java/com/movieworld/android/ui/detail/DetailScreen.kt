@@ -44,12 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CancellationException
-import com.movieworld.android.PcPlayback
-import com.movieworld.android.TvNetwork
+import com.movieworld.android.PlaybackDestination
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.movieworld.android.CastState
 import com.movieworld.android.Playback
+import com.movieworld.android.HomeSync
 import com.movieworld.android.ui.LocalAppGraph
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.components.bottomClearance
@@ -98,18 +94,9 @@ fun DetailScreen(movieId: String, onBack: () -> Unit, onOpen: (String) -> Unit, 
     val cast by Playback.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var error by remember { mutableStateOf<String?>(null) }
-    var pcAvailable by remember { mutableStateOf(false) }
-    LaunchedEffect(context) {
-        while (true) {
-            val address = context.getSharedPreferences("tv", android.content.Context.MODE_PRIVATE)
-                .getString("pc-server", "").orEmpty()
-            pcAvailable = if (address.isBlank()) false else try {
-                withContext(Dispatchers.IO) { PcPlayback(TvNetwork(context), address).check() }
-                true
-            } catch (failure: CancellationException) { throw failure }
-            catch (_: Exception) { false }
-            delay(10000)
-        }
+    val home by graph.home.state.collectAsStateWithLifecycle()
+    LaunchedEffect(movieId, home.address) {
+        if (home.address != null) HomeSync.caption(context, movieId)
     }
     var pickerRestart by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -122,7 +109,7 @@ fun DetailScreen(movieId: String, onBack: () -> Unit, onOpen: (String) -> Unit, 
                     .edit().putString(movie.id, uri.toString()).apply()
                 Playback.start(context, movie, state.details?.telegram, pickerRestart, uri.toString())
                 error = null
-            } catch (failure: Exception) { error = failure.message ?: "Cannot start TV playback" }
+            } catch (failure: Exception) { error = failure.message ?: "Cannot start playback" }
         }
     }
     DetailContent(
@@ -140,9 +127,16 @@ fun DetailScreen(movieId: String, onBack: () -> Unit, onOpen: (String) -> Unit, 
             try {
                 Playback.start(context, movie, state.details?.telegram, restart)
                 error = null
-            } catch (failure: Exception) { error = failure.message ?: "Cannot start TV playback" }
+            } catch (failure: Exception) { error = failure.message ?: "Cannot start playback" }
         },
-        pcAvailable = pcAvailable,
+        destination = home.destination,
+        pcAvailable = home.address != null,
+        onPlayDevice = {
+            state.movie?.let { Playback.start(context, it, state.details?.telegram, false, destination = PlaybackDestination.DEVICE) }
+        },
+        onPlayTv = {
+            state.movie?.let { Playback.start(context, it, state.details?.telegram, false, destination = PlaybackDestination.TV) }
+        },
         onPlayPc = {
             val movie = state.movie ?: return@DetailContent
             try {
@@ -174,6 +168,9 @@ fun DetailContent(
     onMarkWatched: () -> Unit = {},
     pcAvailable: Boolean = false,
     onPlayPc: () -> Unit = {},
+    destination: PlaybackDestination = PlaybackDestination.TV,
+    onPlayDevice: () -> Unit = {},
+    onPlayTv: () -> Unit = {},
 ) {
     val movie = state.movie
     val details = state.details
@@ -244,7 +241,7 @@ fun DetailContent(
                         Spacer(Modifier.height(Dimens.md))
                     }
                     PrimaryButton(
-                        text = if (ownSession) cast.message else playLabel(resume),
+                        text = if (ownSession) cast.message else playLabel(resume, destination),
                         onClick = { onPlay(false) }, icon = Icons.Filled.PlayArrow,
                         enabled = canStart, modifier = Modifier.fillMaxWidth(),
                     )
@@ -268,6 +265,10 @@ fun DetailContent(
                         if (optionsExpanded) {
                             Column(Modifier.padding(start = Dimens.md, end = Dimens.md, bottom = Dimens.md)) {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(Dimens.sm), verticalArrangement = Arrangement.spacedBy(Dimens.sm)) {
+                                    SecondaryButton("Play on this device", onClick = onPlayDevice,
+                                        icon = Icons.Filled.PlayArrow, enabled = canStart)
+                                    SecondaryButton("Play on TV", onClick = onPlayTv,
+                                        icon = Icons.Filled.PlayArrow, enabled = canStart)
                                     if (pcAvailable) SecondaryButton("Play from PC", onClick = onPlayPc,
                                         icon = Icons.Filled.PlayArrow, enabled = canStart)
                                     if (resume >= 15) SecondaryButton("Start over", onClick = { onPlay(true) }, icon = AppIcons.Replay, enabled = canStart)

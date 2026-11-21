@@ -52,6 +52,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.movieworld.android.Playback
+import com.movieworld.android.PlaybackDestination
+import com.movieworld.android.HomeSync
+import com.movieworld.android.ui.player.DevicePlayer
 import com.movieworld.android.ui.components.AppIcons
 import com.movieworld.android.ui.detail.DetailScreen
 import com.movieworld.android.ui.history.HistoryScreen
@@ -108,17 +111,37 @@ fun MovieWorldApp(graph: AppGraph) {
     var dismissedMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val showPlayer = route != Routes.SETTINGS && phase != PlaybackPhase.Idle && (cast.active || dismissedMessage != cast.message)
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var deviceExpanded by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     var poster by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(cast.movieId) {
         poster = cast.movieId?.let { id -> withContext(Dispatchers.IO) { catalogueResult { graph.catalogue.movie(id)?.poster } } }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(cast.movieId, cast.active, cast.destination) {
+        if (cast.active && cast.destination == PlaybackDestination.DEVICE) deviceExpanded = true
+        if (cast.active && cast.destination == PlaybackDestination.TV) deviceExpanded = false
+    }
     LaunchedEffect(lifecycleOwner, context) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
+                graph.home.refresh()
                 Playback.observePc(context)
                 delay(3000)
+            }
+        }
+    }
+    LaunchedEffect(lifecycleOwner, graph) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                graph.home.refresh()
+                if (graph.home.state.value.address != null) {
+                    HomeSync.captions(context)
+                    withContext(Dispatchers.IO) {
+                        com.movieworld.android.OperationLog.schedule(context)
+                    }
+                }
+                delay(60_000)
             }
         }
     }
@@ -140,8 +163,11 @@ fun MovieWorldApp(graph: AppGraph) {
                     AnimatedVisibility(showPlayer, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                         MiniPlayer(
                             state = cast, poster = poster,
-                            onExpand = { expanded = true },
-                            onPlayPause = { Playback.control(context, if (cast.playing) "pause" else "resume") },
+                            onExpand = { if (cast.destination == PlaybackDestination.DEVICE) deviceExpanded = true else expanded = true },
+                            onPlayPause = {
+                                if (cast.destination == PlaybackDestination.DEVICE) deviceExpanded = true
+                                Playback.control(context, if (cast.playing) "pause" else "resume")
+                            },
                             onStop = { Playback.control(context, "stop") },
                             onDismiss = { dismissedMessage = cast.message },
                             modifier = if (showTabs) Modifier else Modifier.background(Surface2).navigationBarsPadding(),
@@ -185,7 +211,10 @@ fun MovieWorldApp(graph: AppGraph) {
             }
         }
     }
-    if (expanded && phase != PlaybackPhase.Idle) {
+    if (deviceExpanded && cast.destination == PlaybackDestination.DEVICE && phase != PlaybackPhase.Idle) {
+        DevicePlayer(state = cast, onDismiss = { deviceExpanded = false })
+    }
+    if (expanded && cast.destination != PlaybackDestination.DEVICE && phase != PlaybackPhase.Idle) {
         PlayerSheet(
             state = cast, poster = poster,
             onPlayPause = { Playback.control(context, if (cast.playing) "pause" else "resume") },
