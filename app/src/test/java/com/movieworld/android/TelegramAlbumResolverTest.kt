@@ -45,4 +45,33 @@ class TelegramAlbumResolverTest {
         assertNull(resolveAlbumVideo(post(10)) { calls++; post(it.id + 10) })
         assertEquals(20, calls)
     }
+    private fun namedVideo(name: String) = post(20, album = 0, video = true).apply {
+        (content as TdApi.MessageVideo).video.fileName = name
+    }
+
+    @Test fun standaloneTrumanPosterFindsMatchingVideo() = runBlocking {
+        assertNotNull(resolveAlbumVideo(post(10, album = 0), "The Truman Show") {
+            namedVideo("The Truman Show 1998.mp4")
+        })
+    }
+
+    @Test fun standalonePosterRejectsAnotherMovie() = runBlocking {
+        assertNull(resolveAlbumVideo(post(10, album = 0), "The Truman Show") {
+            namedVideo("The Mask 1994.mp4")
+        })
+    }
+
+    @Test fun standalonePosterRejectsAnotherChat() = runBlocking {
+        assertNull(resolveAlbumVideo(post(10, album = 0), "The Truman Show") {
+            namedVideo("The Truman Show 1998.mp4").apply { chatId = 99 }
+        })
+    }
+
+    @Test fun standalonePosterDoesNotSkipPastNextPoster() = runBlocking {
+        var calls = 0
+        assertNull(resolveAlbumVideo(post(10, album = 0), "The Truman Show") {
+            calls++; post(20, album = 0)
+        })
+        assertEquals(1, calls)
+    }
 }
