@@ -338,7 +338,7 @@ class PlaybackService : Service() {
             } else {
                 val telegram = TelegramSource.get(this).also { source = it; it.start() }
                 update("Finding movie in Telegram...")
-                val resolved = telegram.resolve(intent.getStringExtra("telegram") ?: error("Telegram link unavailable"))
+                val resolved = telegram.resolve(intent.getStringExtra("telegram") ?: error("Telegram link unavailable"), intent.getStringExtra("title"))
                 telegram.protectMovie(resolved)
                 val movie = telegram.prepare(resolved)
 
@@ -539,7 +539,7 @@ class PlaybackService : Service() {
                     val tg = TelegramSource.get(this)
                     try {
                         tg.start()
-                        val media = tg.resolve(telegram)
+                        val media = tg.resolve(telegram, intent.getStringExtra("title"))
                         tg.protectMovie(media)
                         source = tg
                         val file = File(media.file.local.path)

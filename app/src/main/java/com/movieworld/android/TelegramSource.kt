@@ -244,7 +244,7 @@ class TelegramSource private constructor(private val context: Context) {
         @Suppress("UNREACHABLE_CODE") message
     }
 
-    suspend fun resolve(url: String): TelegramMedia {
+    suspend fun resolve(url: String, expectedTitle: String? = null): TelegramMedia {
         check(client != null) { "Sign into Telegram in TV settings first." }
         val authorization = withTimeoutOrNull(20_000) {
             state.first { it.step !in listOf("setup", "initializing", "joining") }
@@ -268,10 +268,10 @@ class TelegramSource private constructor(private val context: Context) {
         var postId = uri.lastPathSegment?.toLongOrNull()
             ?: error("This title does not have a valid Telegram post link.")
         val postPrefix = url.substringBefore('?').substringBeforeLast('/')
-        return resolveAlbumVideo(message) {
+        return resolveAlbumVideo(message, expectedTitle) {
             postId += 1
             request(TdApi.GetMessageLinkInfo("$postPrefix/$postId")).message
-        } ?: error("No video was found in this Telegram album. Open it in Telegram to check the post.")
+        } ?: error("No matching video was found for this Telegram post. Open it in Telegram to check the post.")
     }
 
     private suspend fun cleanupExpiredMovies() {
